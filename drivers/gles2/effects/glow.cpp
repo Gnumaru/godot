@@ -44,131 +44,26 @@ Glow *Glow::get_singleton() {
 
 Glow::Glow() {
 	singleton = this;
-
-	glow.shader.initialize();
-	glow.shader_version = glow.shader.version_create();
-
-	{ // Screen Triangle.
-		glGenBuffers(1, &screen_triangle);
-		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
-
-		const float qv[6] = {
-			-1.0f,
-			-1.0f,
-			3.0f,
-			-1.0f,
-			-1.0f,
-			3.0f,
-		};
-
-		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6, qv, GL_STATIC_DRAW);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
-
-		glGenVertexArrays(1, &screen_triangle_array);
-		glBindVertexArray(screen_triangle_array);
-		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
-		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
-		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
-	}
+	// GLES2 simplification (Fase A, 3D minimo low-end): glow desativado.
+	// Mantido como stub no-op que ainda compila como GLES3 para facilitar porte futuro.
+	// Sem inicializacao de shader, VBO/VAO ou estado GL.
 }
 
 Glow::~Glow() {
-	glDeleteBuffers(1, &screen_triangle);
-	glDeleteVertexArrays(1, &screen_triangle_array);
-
-	glow.shader.version_free(glow.shader_version);
-
 	singleton = nullptr;
 }
 
 void Glow::_draw_screen_triangle() {
-	glBindVertexArray(screen_triangle_array);
-	glDrawArrays(GL_TRIANGLES, 0, 3);
-	glBindVertexArray(0);
+	// No-op (glow desativado na simplificacao GLES2).
 }
 
 void Glow::process_glow(GLuint p_source_color, Size2i p_size, const Glow::Level *p_glow_buffers, uint32_t p_view, bool p_use_multiview) {
-	ERR_FAIL_COND(p_source_color == 0);
-	ERR_FAIL_COND(p_glow_buffers[3].color == 0);
-
-	// Reset some OpenGL state...
-	glDisable(GL_BLEND);
-	glDisable(GL_DEPTH_TEST);
-	glDepthMask(GL_FALSE);
-
-	// Start with our filter pass
-	{
-		glBindFramebuffer(GL_FRAMEBUFFER, p_glow_buffers[0].fbo);
-		glViewport(0, 0, p_glow_buffers[0].size.x, p_glow_buffers[0].size.y);
-
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(p_use_multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, p_source_color);
-
-		uint64_t specialization = p_use_multiview ? GlowShaderGLES2::USE_MULTIVIEW : 0;
-		bool success = glow.shader.version_bind_shader(glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		if (!success) {
-			return;
-		}
-
-		glow.shader.version_set_uniform(GlowShaderGLES2::PIXEL_SIZE, 1.0 / p_glow_buffers[0].size.x, 1.0 / p_glow_buffers[0].size.y, glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		glow.shader.version_set_uniform(GlowShaderGLES2::VIEW, float(p_view), glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		glow.shader.version_set_uniform(GlowShaderGLES2::LUMINANCE_MULTIPLIER, luminance_multiplier, glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		glow.shader.version_set_uniform(GlowShaderGLES2::GLOW_BLOOM, glow_bloom, glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		glow.shader.version_set_uniform(GlowShaderGLES2::GLOW_HDR_THRESHOLD, glow_hdr_bleed_threshold, glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		glow.shader.version_set_uniform(GlowShaderGLES2::GLOW_HDR_SCALE, glow_hdr_bleed_scale, glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-		glow.shader.version_set_uniform(GlowShaderGLES2::GLOW_LUMINANCE_CAP, glow_hdr_luminance_cap, glow.shader_version, GlowShaderGLES2::MODE_FILTER, specialization);
-
-		_draw_screen_triangle();
-	}
-
-	// Continue with downsampling
-	{
-		bool success = glow.shader.version_bind_shader(glow.shader_version, GlowShaderGLES2::MODE_DOWNSAMPLE, 0);
-		if (!success) {
-			return;
-		}
-
-		for (int i = 1; i < 4; i++) {
-			glBindFramebuffer(GL_FRAMEBUFFER, p_glow_buffers[i].fbo);
-			glViewport(0, 0, p_glow_buffers[i].size.x, p_glow_buffers[i].size.y);
-
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, p_glow_buffers[i - 1].color);
-
-			glow.shader.version_set_uniform(GlowShaderGLES2::PIXEL_SIZE, 1.0 / p_glow_buffers[i].size.x, 1.0 / p_glow_buffers[i].size.y, glow.shader_version, GlowShaderGLES2::MODE_DOWNSAMPLE);
-
-			_draw_screen_triangle();
-		}
-	}
-
-	// Now upsample
-	{
-		bool success = glow.shader.version_bind_shader(glow.shader_version, GlowShaderGLES2::MODE_UPSAMPLE, 0);
-		if (!success) {
-			return;
-		}
-
-		for (int i = 2; i >= 0; i--) {
-			glBindFramebuffer(GL_FRAMEBUFFER, p_glow_buffers[i].fbo);
-			glViewport(0, 0, p_glow_buffers[i].size.x, p_glow_buffers[i].size.y);
-
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, p_glow_buffers[i + 1].color);
-
-			glow.shader.version_set_uniform(GlowShaderGLES2::PIXEL_SIZE, 1.0 / p_glow_buffers[i].size.x, 1.0 / p_glow_buffers[i].size.y, glow.shader_version, GlowShaderGLES2::MODE_UPSAMPLE);
-
-			_draw_screen_triangle();
-		}
-	}
-
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
-	glDepthMask(GL_TRUE);
-	glUseProgram(0);
-	glBindTexture(GL_TEXTURE_2D, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);
+	// No-op (glow desativado na simplificacao GLES2).
+	(void)p_source_color;
+	(void)p_size;
+	(void)p_glow_buffers;
+	(void)p_view;
+	(void)p_use_multiview;
 }
 
 #endif // GLES2_ENABLED

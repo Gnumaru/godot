@@ -568,65 +568,12 @@ void RenderSceneBuffersGLES2::set_apply_canvas_bg_exposure(bool p_apply_canvas_b
 }
 
 void RenderSceneBuffersGLES2::check_glow_buffers() {
-	if (glow.levels[0].color != 0) {
-		// already have these setup..
-		return;
-	}
-
-	GLES2::TextureStorage *texture_storage = GLES2::TextureStorage::get_singleton();
-	Size2i level_size = internal_size;
-	for (int i = 0; i < 4; i++) {
-		level_size = Size2i(level_size.x >> 1, level_size.y >> 1).maxi(4);
-
-		glow.levels[i].size = level_size;
-
-		// Create our texture
-		glGenTextures(1, &glow.levels[i].color);
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, glow.levels[i].color);
-
-		glTexImage2D(GL_TEXTURE_2D, 0, color_internal_format, level_size.x, level_size.y, 0, color_format, color_type, nullptr);
-
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-
-		GLES2::Utilities::get_singleton()->texture_allocated_data(glow.levels[i].color, level_size.x * level_size.y * color_format_size, String("Glow buffer ") + String::num_int64(i));
-
-		// Create our FBO
-		glGenFramebuffers(1, &glow.levels[i].fbo);
-		glBindFramebuffer(GL_FRAMEBUFFER, glow.levels[i].fbo);
-
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glow.levels[i].color, 0);
-
-		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE) {
-			WARN_PRINT("Could not create glow buffers, status: " + texture_storage->get_framebuffer_error(status));
-			_clear_glow_buffers();
-			break;
-		}
-	}
-
-	glBindTexture(GL_TEXTURE_2D, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);
+	// GLES2 simplification (Fase A): glow desativado, sem alocacao de texturas/FBOs.
+	// Stub no-op que ainda compila como GLES3.
 }
 
 void RenderSceneBuffersGLES2::_clear_glow_buffers() {
-	for (int i = 0; i < 4; i++) {
-		if (glow.levels[i].fbo != 0) {
-			glDeleteFramebuffers(1, &glow.levels[i].fbo);
-			glow.levels[i].fbo = 0;
-		}
-
-		if (glow.levels[i].color != 0) {
-			GLES2::Utilities::get_singleton()->texture_free_data(glow.levels[i].color);
-			glow.levels[i].color = 0;
-		}
-	}
+	// GLES2 simplification (Fase A): nada alocado, nada a liberar.
 }
 
 void RenderSceneBuffersGLES2::free_render_buffer_data() {

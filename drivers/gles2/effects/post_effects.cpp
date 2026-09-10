@@ -44,48 +44,17 @@ PostEffects *PostEffects::get_singleton() {
 
 PostEffects::PostEffects() {
 	singleton = this;
-
-	post.shader.initialize();
-	post.shader_version = post.shader.version_create();
-	post.shader.version_bind_shader(post.shader_version, PostShaderGLES2::MODE_DEFAULT);
-
-	{ // Screen Triangle.
-		glGenBuffers(1, &screen_triangle);
-		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
-
-		const float qv[6] = {
-			-1.0f,
-			-1.0f,
-			3.0f,
-			-1.0f,
-			-1.0f,
-			3.0f,
-		};
-
-		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6, qv, GL_STATIC_DRAW);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
-
-		glGenVertexArrays(1, &screen_triangle_array);
-		glBindVertexArray(screen_triangle_array);
-		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
-		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
-		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
-	}
+	// GLES2 simplification (Fase A, 3D minimo low-end): post/SSAO desativado.
+	// Mantido como stub no-op que ainda compila como GLES3 para facilitar porte futuro.
+	// Sem inicializacao de shader, VBO/VAO ou estado GL.
 }
 
 PostEffects::~PostEffects() {
 	singleton = nullptr;
-	glDeleteBuffers(1, &screen_triangle);
-	glDeleteVertexArrays(1, &screen_triangle_array);
-	post.shader.version_free(post.shader_version);
 }
 
 void PostEffects::_draw_screen_triangle() {
-	glBindVertexArray(screen_triangle_array);
-	glDrawArrays(GL_TRIANGLES, 0, 3);
-	glBindVertexArray(0);
+	// No-op (post/SSAO desativado na simplificacao GLES2).
 }
 
 void PostEffects::post_copy(
@@ -93,99 +62,25 @@ void PostEffects::post_copy(
 		GLuint p_source_depth, bool p_ssao_enabled, int p_ssao_quality_level, float p_ssao_strength, float p_ssao_radius,
 		Size2i p_source_size, float p_luminance_multiplier, const Glow::Level *p_glow_buffers, float p_glow_intensity,
 		float p_srgb_white, uint32_t p_view, bool p_use_multiview, uint64_t p_spec_constants, bool p_bilinear_filtering) {
-	glDisable(GL_DEPTH_TEST);
-	glDepthMask(GL_FALSE);
-	glDisable(GL_BLEND);
-
-	glBindFramebuffer(GL_FRAMEBUFFER, p_dest_framebuffer);
-	glViewport(0, 0, p_dest_size.x, p_dest_size.y);
-
-	PostShaderGLES2::ShaderVariant mode = PostShaderGLES2::MODE_DEFAULT;
-	uint64_t flags = p_spec_constants;
-	if (p_use_multiview) {
-		flags |= PostShaderGLES2::USE_MULTIVIEW;
-	}
-	if (p_glow_buffers != nullptr) {
-		flags |= PostShaderGLES2::USE_GLOW;
-	}
-	if (p_ssao_enabled) {
-		if (p_ssao_quality_level == RSE::ENV_SSAO_QUALITY_VERY_LOW) {
-			flags |= PostShaderGLES2::USE_SSAO_ABYSS;
-		} else if (p_ssao_quality_level == RSE::ENV_SSAO_QUALITY_LOW) {
-			flags |= PostShaderGLES2::USE_SSAO_LOW;
-		} else if (p_ssao_quality_level == RSE::ENV_SSAO_QUALITY_HIGH) {
-			flags |= PostShaderGLES2::USE_SSAO_HIGH;
-		} else if (p_ssao_quality_level == RSE::ENV_SSAO_QUALITY_ULTRA) {
-			flags |= PostShaderGLES2::USE_SSAO_MEGA;
-		} else {
-			flags |= PostShaderGLES2::USE_SSAO_MED;
-		}
-	}
-	if (p_luminance_multiplier != 1.0) {
-		flags |= PostShaderGLES2::USE_LUMINANCE_MULTIPLIER;
-	}
-
-	bool success = post.shader.version_bind_shader(post.shader_version, mode, flags);
-	if (!success) {
-		return;
-	}
-
-	GLenum texture_target = p_use_multiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(texture_target, p_source_color);
-
-	glTexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, p_bilinear_filtering ? GL_LINEAR : GL_NEAREST);
-	glTexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, p_bilinear_filtering ? GL_LINEAR : GL_NEAREST);
-
-	if (p_ssao_enabled) {
-		glActiveTexture(GL_TEXTURE3);
-		glBindTexture(texture_target, p_source_depth);
-		glTexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, GL_NEAREST); // Thanks to mrjustaguy!
-		glTexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-
-		post.shader.version_set_uniform(PostShaderGLES2::SSAO_INTENSITY, p_ssao_strength, post.shader_version, mode, flags);
-		post.shader.version_set_uniform(PostShaderGLES2::SSAO_RADIUS_FRAC, p_ssao_radius, post.shader_version, mode, flags);
-		post.shader.version_set_uniform(PostShaderGLES2::SSAO_PRN_UV, // This converts the UV coordinate into a pseudo-random number.
-				p_source_size.x * 1.087f * ((1.0f + sqrt(5.0f)) / 2.0f),
-				p_source_size.y * 1.087f * ((9.0f + sqrt(221.0f)) / 10.0f),
-				post.shader_version, mode, flags);
-	}
-
-	if (p_glow_buffers != nullptr) {
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, p_glow_buffers[0].color);
-
-		post.shader.version_set_uniform(PostShaderGLES2::PIXEL_SIZE, 1.0 / p_source_size.x, 1.0 / p_source_size.y, post.shader_version, mode, flags);
-		post.shader.version_set_uniform(PostShaderGLES2::GLOW_INTENSITY, p_glow_intensity, post.shader_version, mode, flags);
-		post.shader.version_set_uniform(PostShaderGLES2::SRGB_WHITE, p_srgb_white, post.shader_version, mode, flags);
-	}
-
-	post.shader.version_set_uniform(PostShaderGLES2::VIEW, float(p_view), post.shader_version, mode, flags);
-	post.shader.version_set_uniform(PostShaderGLES2::LUMINANCE_MULTIPLIER, p_luminance_multiplier, post.shader_version, mode, flags);
-
-	_draw_screen_triangle();
-
-	// Reset state
-	if (p_glow_buffers != nullptr) {
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, 0);
-	}
-	if (p_ssao_enabled) {
-		glActiveTexture(GL_TEXTURE3);
-		glBindTexture(texture_target, 0);
-	}
-
-	// Return back to nearest
-	glActiveTexture(GL_TEXTURE0);
-	glTexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glBindTexture(texture_target, 0);
-
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
-	glDepthMask(GL_TRUE);
-	glUseProgram(0);
-	glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);
+	// No-op (post/SSAO/glow desativados na simplificacao GLES2).
+	// Chamada preservada para nao alterar rasterizer_scene_gles2.cpp.
+	(void)p_dest_framebuffer;
+	(void)p_dest_size;
+	(void)p_source_color;
+	(void)p_source_depth;
+	(void)p_ssao_enabled;
+	(void)p_ssao_quality_level;
+	(void)p_ssao_strength;
+	(void)p_ssao_radius;
+	(void)p_source_size;
+	(void)p_luminance_multiplier;
+	(void)p_glow_buffers;
+	(void)p_glow_intensity;
+	(void)p_srgb_white;
+	(void)p_view;
+	(void)p_use_multiview;
+	(void)p_spec_constants;
+	(void)p_bilinear_filtering;
 }
 
 #endif // GLES2_ENABLED
