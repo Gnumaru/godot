@@ -397,19 +397,15 @@ public:
 	}
 
 	_FORCE_INLINE_ GLuint particles_get_gl_buffer(RID p_particles) {
-		Particles *particles = particles_owner.get_or_null(p_particles);
-
-		if ((particles->draw_order == RSE::PARTICLES_DRAW_ORDER_VIEW_DEPTH || particles->draw_order == RSE::PARTICLES_DRAW_ORDER_REVERSE_LIFETIME) && particles->sort_buffer_filled) {
-			return particles->sort_buffer;
-		}
-		return particles->back_instance_buffer;
+		// GLES2 simplification (Fase C): sem instance buffer GPU; 0 faz o rasterizador pular o desenho.
+		(void)p_particles;
+		return 0;
 	}
 
 	_FORCE_INLINE_ GLuint particles_get_prev_gl_buffer(RID p_particles) {
-		Particles *particles = particles_owner.get_or_null(p_particles);
-		ERR_FAIL_NULL_V(particles, 0);
-
-		return particles->front_instance_buffer;
+		// GLES2 simplification (Fase C): sem prev instance buffer GPU.
+		(void)p_particles;
+		return 0;
 	}
 
 	_FORCE_INLINE_ uint64_t particles_get_last_change(RID p_particles) {
