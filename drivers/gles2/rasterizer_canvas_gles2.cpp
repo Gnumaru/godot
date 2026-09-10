@@ -318,64 +318,57 @@ void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_
 		glBindTexture(GL_TEXTURE_2D, shadow_tex);
 	}
 
+	// GLES2 simplification (3D minimo low-end): CanvasData convertido de UBO
+	// para uniforms comuns. Calcula os valores aqui e aplica por batch com
+	// version_set_uniform apos version_bind_shader (padrao Godot 3 / fork).
+	Size2i ssize = texture_storage->render_target_get_size(p_to_render_target);
+
+	// If we've overridden the render target's color texture, then we need
+	// to invert the Y axis, so 2D texture appear right side up.
+	// We're probably rendering directly to an XR device.
+	float y_scale = texture_storage->render_target_get_override_color(p_to_render_target).is_valid() ? -2.0f : 2.0f;
+
+	Transform3D screen_transform;
+	screen_transform.translate_local(-(ssize.width / 2.0f), -(ssize.height / 2.0f), 0.0f);
+	screen_transform.scale(Vector3(2.0f / ssize.width, y_scale / ssize.height, 1.0f));
+	state.screen_transform_state = screen_transform;
+	state.canvas_transform_state = p_canvas_transform;
+
+	Transform2D normal_transform = p_canvas_transform;
+	normal_transform.columns[0].normalize();
+	normal_transform.columns[1].normalize();
+	normal_transform.columns[2] = Vector2();
+	state.canvas_normal_transform_state = normal_transform;
+
+	state.canvas_modulate_state = p_modulate;
+
+	Size2 render_target_size = texture_storage->render_target_get_size(p_to_render_target);
+	state.screen_pixel_size_state[0] = 1.0f / float(render_target_size.x);
+	state.screen_pixel_size_state[1] = 1.0f / float(render_target_size.y);
+
+	state.use_pixel_snap_state = p_snap_2d_vertices_to_pixel;
+
+	state.directional_light_count_state = directional_light_count;
+
+	Vector2 canvas_scale = p_canvas_transform.get_scale();
+
+	state.sdf_to_screen_state[0] = float(render_target_size.width) / canvas_scale.x;
+	state.sdf_to_screen_state[1] = float(render_target_size.height) / canvas_scale.y;
+
+	state.screen_to_sdf_state[0] = 1.0f / state.sdf_to_screen_state[0];
+	state.screen_to_sdf_state[1] = 1.0f / state.sdf_to_screen_state[1];
+
+	Rect2 sdf_rect = texture_storage->render_target_get_sdf_rect(p_to_render_target);
+	Rect2 sdf_tex_rect(sdf_rect.position / canvas_scale, sdf_rect.size / canvas_scale);
+
+	state.sdf_to_tex_state[0] = 1.0f / float(sdf_tex_rect.size.width);
+	state.sdf_to_tex_state[1] = 1.0f / float(sdf_tex_rect.size.height);
+	state.sdf_to_tex_state[2] = float(-sdf_tex_rect.position.x / sdf_tex_rect.size.width);
+	state.sdf_to_tex_state[3] = float(-sdf_tex_rect.position.y / sdf_tex_rect.size.height);
+
+	state.tex_to_sdf_state = 1.0f / float((canvas_scale.x + canvas_scale.y) * 0.5);
+
 	{
-		//update canvas state uniform buffer
-		StateBuffer state_buffer;
-
-		Size2i ssize = texture_storage->render_target_get_size(p_to_render_target);
-
-		// If we've overridden the render target's color texture, then we need
-		// to invert the Y axis, so 2D texture appear right side up.
-		// We're probably rendering directly to an XR device.
-		float y_scale = texture_storage->render_target_get_override_color(p_to_render_target).is_valid() ? -2.0f : 2.0f;
-
-		Transform3D screen_transform;
-		screen_transform.translate_local(-(ssize.width / 2.0f), -(ssize.height / 2.0f), 0.0f);
-		screen_transform.scale(Vector3(2.0f / ssize.width, y_scale / ssize.height, 1.0f));
-		_update_transform_to_mat4(screen_transform, state_buffer.screen_transform);
-		_update_transform_2d_to_mat4(p_canvas_transform, state_buffer.canvas_transform);
-
-		Transform2D normal_transform = p_canvas_transform;
-		normal_transform.columns[0].normalize();
-		normal_transform.columns[1].normalize();
-		normal_transform.columns[2] = Vector2();
-		_update_transform_2d_to_mat4(normal_transform, state_buffer.canvas_normal_transform);
-
-		state_buffer.canvas_modulate[0] = p_modulate.r;
-		state_buffer.canvas_modulate[1] = p_modulate.g;
-		state_buffer.canvas_modulate[2] = p_modulate.b;
-		state_buffer.canvas_modulate[3] = p_modulate.a;
-
-		Size2 render_target_size = texture_storage->render_target_get_size(p_to_render_target);
-		state_buffer.screen_pixel_size[0] = 1.0 / render_target_size.x;
-		state_buffer.screen_pixel_size[1] = 1.0 / render_target_size.y;
-
-		state_buffer.time = state.time;
-		state_buffer.use_pixel_snap = p_snap_2d_vertices_to_pixel;
-
-		state_buffer.directional_light_count = directional_light_count;
-
-		Vector2 canvas_scale = p_canvas_transform.get_scale();
-
-		state_buffer.sdf_to_screen[0] = render_target_size.width / canvas_scale.x;
-		state_buffer.sdf_to_screen[1] = render_target_size.height / canvas_scale.y;
-
-		state_buffer.screen_to_sdf[0] = 1.0 / state_buffer.sdf_to_screen[0];
-		state_buffer.screen_to_sdf[1] = 1.0 / state_buffer.sdf_to_screen[1];
-
-		Rect2 sdf_rect = texture_storage->render_target_get_sdf_rect(p_to_render_target);
-		Rect2 sdf_tex_rect(sdf_rect.position / canvas_scale, sdf_rect.size / canvas_scale);
-
-		state_buffer.sdf_to_tex[0] = 1.0 / sdf_tex_rect.size.width;
-		state_buffer.sdf_to_tex[1] = 1.0 / sdf_tex_rect.size.height;
-		state_buffer.sdf_to_tex[2] = -sdf_tex_rect.position.x / sdf_tex_rect.size.width;
-		state_buffer.sdf_to_tex[3] = -sdf_tex_rect.position.y / sdf_tex_rect.size.height;
-
-		state_buffer.tex_to_sdf = 1.0 / ((canvas_scale.x + canvas_scale.y) * 0.5);
-
-		glBindBufferBase(GL_UNIFORM_BUFFER, BASE_UNIFORM_LOCATION, state.canvas_instance_data_buffers[state.current_data_buffer_index].state_ubo);
-		glBufferData(GL_UNIFORM_BUFFER, sizeof(StateBuffer), &state_buffer, GL_STREAM_DRAW);
-
 		GLuint global_buffer = material_storage->global_shader_parameters_get_uniform_buffer();
 
 		glBindBufferBase(GL_UNIFORM_BUFFER, GLOBAL_UNIFORM_LOCATION, global_buffer);
@@ -390,7 +383,6 @@ void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_
 		state.default_repeat = p_default_repeat;
 	}
 
-	Size2 render_target_size = texture_storage->render_target_get_size(p_to_render_target);
 	glViewport(0, 0, render_target_size.x, render_target_size.y);
 
 	r_sdf_used = false;
@@ -726,6 +718,20 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 		// Bind per-batch uniforms.
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::BATCH_FLAGS, state.canvas_instance_batches[i].flags, shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SPECULAR_SHININESS_IN, state.canvas_instance_batches[i].specular_shininess, shader_version, variant, specialization);
+
+		// GLES2 simplification: CanvasData como uniforms comuns (sem UBO).
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::CANVAS_TRANSFORM, state.canvas_transform_state, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SCREEN_TRANSFORM, state.screen_transform_state, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::CANVAS_NORMAL_TRANSFORM, state.canvas_normal_transform_state, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::CANVAS_MODULATION, state.canvas_modulate_state, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SCREEN_PIXEL_SIZE, state.screen_pixel_size_state[0], state.screen_pixel_size_state[1], shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::TIME, state.time, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::USE_PIXEL_SNAP, state.use_pixel_snap_state ? 1 : 0, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SDF_TO_TEX, state.sdf_to_tex_state[0], state.sdf_to_tex_state[1], state.sdf_to_tex_state[2], state.sdf_to_tex_state[3], shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SCREEN_TO_SDF, state.screen_to_sdf_state[0], state.screen_to_sdf_state[1], shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SDF_TO_SCREEN, state.sdf_to_screen_state[0], state.sdf_to_screen_state[1], shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::DIRECTIONAL_LIGHT_COUNT, state.directional_light_count_state, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::TEX_TO_SDF, state.tex_to_sdf_state, shader_version, variant, specialization);
 
 		GLES2::CanvasShaderData::BlendMode blend_mode = state.canvas_instance_batches[i].blend_mode;
 		Color blend_color = state.canvas_instance_batches[i].blend_color;
@@ -2592,23 +2598,20 @@ void RasterizerCanvasGLES2::free_polygon(PolygonID p_polygon) {
 // In theory allocations can reach as high as number of windows * 3 frames
 // because OpenGL can start rendering subsequent frames before finishing the current one
 void RasterizerCanvasGLES2::_allocate_instance_data_buffer() {
-	GLuint new_buffers[3];
-	glGenBuffers(3, new_buffers);
+	// GLES2 simplification: sem State UBO (CanvasData virou uniforms comuns).
+	GLuint new_buffers[2];
+	glGenBuffers(2, new_buffers);
 	// Batch UBO.
 	glBindBuffer(GL_ARRAY_BUFFER, new_buffers[0]);
 	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, new_buffers[0], data.max_instance_buffer_size, nullptr, GL_STREAM_DRAW, "2D Batch UBO[" + itos(state.current_data_buffer_index) + "][0]");
 	// Light uniform buffer.
 	glBindBuffer(GL_UNIFORM_BUFFER, new_buffers[1]);
 	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, new_buffers[1], sizeof(LightUniform) * data.max_lights_per_render, nullptr, GL_STREAM_DRAW, "2D Lights UBO[" + itos(state.current_data_buffer_index) + "]");
-	// State buffer.
-	glBindBuffer(GL_UNIFORM_BUFFER, new_buffers[2]);
-	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, new_buffers[2], sizeof(StateBuffer), nullptr, GL_STREAM_DRAW, "2D State UBO[" + itos(state.current_data_buffer_index) + "]");
 
 	state.current_data_buffer_index = (state.current_data_buffer_index + 1);
 	DataBuffer db;
 	db.instance_buffers.push_back(new_buffers[0]);
 	db.light_ubo = new_buffers[1];
-	db.state_ubo = new_buffers[2];
 	db.last_frame_used = RSG::rasterizer->get_frame_number();
 	state.canvas_instance_data_buffers.insert(state.current_data_buffer_index, db);
 	state.current_data_buffer_index = state.current_data_buffer_index % state.canvas_instance_data_buffers.size();
@@ -2787,21 +2790,18 @@ RasterizerCanvasGLES2::RasterizerCanvasGLES2() {
 	state.canvas_instance_batches.reserve(200);
 
 	for (int i = 0; i < 3; i++) {
-		GLuint new_buffers[3];
-		glGenBuffers(3, new_buffers);
+		// GLES2 simplification: sem State UBO (CanvasData virou uniforms comuns).
+		GLuint new_buffers[2];
+		glGenBuffers(2, new_buffers);
 		// Batch UBO.
 		glBindBuffer(GL_ARRAY_BUFFER, new_buffers[0]);
 		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, new_buffers[0], data.max_instance_buffer_size, nullptr, GL_STREAM_DRAW, "Batch UBO[0][0]");
 		// Light uniform buffer.
 		glBindBuffer(GL_UNIFORM_BUFFER, new_buffers[1]);
 		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, new_buffers[1], sizeof(LightUniform) * data.max_lights_per_render, nullptr, GL_STREAM_DRAW, "2D lights UBO[0]");
-		// State buffer.
-		glBindBuffer(GL_UNIFORM_BUFFER, new_buffers[2]);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, new_buffers[2], sizeof(StateBuffer), nullptr, GL_STREAM_DRAW, "2D state UBO[0]");
 		DataBuffer db;
 		db.instance_buffers.push_back(new_buffers[0]);
 		db.light_ubo = new_buffers[1];
-		db.state_ubo = new_buffers[2];
 		db.last_frame_used = 0;
 		db.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		state.canvas_instance_data_buffers[i] = db;
@@ -2931,9 +2931,7 @@ RasterizerCanvasGLES2::~RasterizerCanvasGLES2() {
 		if (state.canvas_instance_data_buffers[i].light_ubo) {
 			GLES2::Utilities::get_singleton()->buffer_free_data(state.canvas_instance_data_buffers[i].light_ubo);
 		}
-		if (state.canvas_instance_data_buffers[i].state_ubo) {
-			GLES2::Utilities::get_singleton()->buffer_free_data(state.canvas_instance_data_buffers[i].state_ubo);
-		}
+		// GLES2 simplification: State UBO removido (CanvasData virou uniforms comuns).
 	}
 }
 

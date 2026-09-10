@@ -152,34 +152,14 @@ class RasterizerCanvasGLES2 : public RendererCanvasRender {
 
 public:
 	enum {
-		BASE_UNIFORM_LOCATION = 0,
+		// GLES2 simplification: BASE_UNIFORM_LOCATION removido (CanvasData virou uniforms comuns).
 		GLOBAL_UNIFORM_LOCATION = 1,
 		LIGHT_UNIFORM_LOCATION = 2,
 		INSTANCE_UNIFORM_LOCATION = 3,
 		MATERIAL_UNIFORM_LOCATION = 4,
 	};
 
-	struct StateBuffer {
-		float canvas_transform[16];
-		float screen_transform[16];
-		float canvas_normal_transform[16];
-		float canvas_modulate[4];
-
-		float screen_pixel_size[2];
-		float time;
-		uint32_t use_pixel_snap;
-
-		float sdf_to_tex[4];
-		float sdf_to_screen[2];
-		float screen_to_sdf[2];
-
-		uint32_t directional_light_count;
-		float tex_to_sdf;
-		uint32_t pad1;
-		uint32_t pad2;
-	};
-
-	static_assert(sizeof(StateBuffer) % 16 == 0, "2D state UBO size must be a multiple of 16 bytes");
+	// GLES2 simplification: StateBuffer removido (CanvasData virou uniforms comuns).
 
 	struct PolygonBuffers {
 		GLuint vertex_buffer = 0;
@@ -284,7 +264,7 @@ public:
 	struct DataBuffer {
 		Vector<GLuint> instance_buffers;
 		GLuint light_ubo = 0;
-		GLuint state_ubo = 0;
+		// GLES2 simplification: state_ubo removido (CanvasData virou uniforms comuns).
 		uint64_t last_frame_used = -3;
 		GLsync fence = GLsync();
 	};
@@ -315,6 +295,20 @@ public:
 		bool transparent_render_target = false;
 
 		double time = 0.0;
+
+		// GLES2 simplification: CanvasData como uniforms comuns (sem UBO).
+		// Preenchido em canvas_render_items, aplicado por batch em _render_items.
+		Transform2D canvas_transform_state;
+		Transform3D screen_transform_state;
+		Transform2D canvas_normal_transform_state;
+		Color canvas_modulate_state = Color(1, 1, 1, 1);
+		float screen_pixel_size_state[2] = { 1.0f, 1.0f };
+		bool use_pixel_snap_state = false;
+		float sdf_to_tex_state[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+		float screen_to_sdf_state[2] = { 1.0f, 1.0f };
+		float sdf_to_screen_state[2] = { 1.0f, 1.0f };
+		uint32_t directional_light_count_state = 0;
+		float tex_to_sdf_state = 1.0f;
 
 		RSE::CanvasItemTextureFilter default_filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_DEFAULT;
 		RSE::CanvasItemTextureRepeat default_repeat = RSE::CANVAS_ITEM_TEXTURE_REPEAT_DEFAULT;

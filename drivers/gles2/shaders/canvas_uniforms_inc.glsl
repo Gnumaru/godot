@@ -32,24 +32,24 @@ layout(std140) uniform GlobalShaderUniformData { //ubo:1
 	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
 };
 
-layout(std140) uniform CanvasData { //ubo:0
-	mat4 canvas_transform;
-	mat4 screen_transform;
-	mat4 canvas_normal_transform;
-	vec4 canvas_modulation;
-	vec2 screen_pixel_size;
-	float time;
-	bool use_pixel_snap;
+// GLES2 simplification (3D minimo low-end): CanvasData era um UBO (std140);
+// convertido para variaveis comuns, uma a uma como no gles2 do Godot 3 / fork ansraer.
+// LightData e GlobalShaderUniformData permanecem UBO por enquanto (arrays grandes,
+// fora dos limites do GLES2 real; exigem reestruturacao futura).
+uniform highp mat4 canvas_transform;
+uniform highp mat4 screen_transform;
+uniform highp mat4 canvas_normal_transform;
+uniform vec4 canvas_modulation;
+uniform vec2 screen_pixel_size;
+uniform highp float time;
+uniform bool use_pixel_snap;
 
-	vec4 sdf_to_tex;
-	vec2 screen_to_sdf;
-	vec2 sdf_to_screen;
+uniform vec4 sdf_to_tex;
+uniform vec2 screen_to_sdf;
+uniform vec2 sdf_to_screen;
 
-	uint directional_light_count;
-	float tex_to_sdf;
-	uint pad1;
-	uint pad2;
-};
+uniform uint directional_light_count;
+uniform highp float tex_to_sdf;
 
 #ifndef DISABLE_LIGHTING
 #define LIGHT_FLAGS_BLEND_MASK uint(3 << 16)
