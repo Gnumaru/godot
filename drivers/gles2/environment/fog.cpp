@@ -38,6 +38,9 @@
 using namespace GLES2;
 
 /* FOG */
+// GLES2 simplification (Fase B, 3D minimo low-end): fog volumetrico desativado.
+// Ja herdado como stub no-op do clone GLES3; mantido sem alocacoes ou passes
+// volumetricos para facilitar porte futuro a GLES2 real.
 
 RID Fog::fog_volume_allocate() {
 	return RID();

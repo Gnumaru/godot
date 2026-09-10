@@ -41,6 +41,9 @@
 using namespace GLES2;
 
 /* VOXEL GI API */
+// GLES2 simplification (Fase B, 3D minimo low-end): GI (voxel/SDFGI) desativado.
+// Ja herdado como stub no-op do clone GLES3; mantido sem alocacoes, texturas 3D ou
+// computacao para facilitar porte futuro a GLES2 real.
 
 RID GI::voxel_gi_allocate() {
 	return RID();
