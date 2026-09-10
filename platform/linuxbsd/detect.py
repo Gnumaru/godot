@@ -545,7 +545,7 @@ def configure(env: "SConsEnvironment"):
             env.Append(LIBS=["glslang", "SPIRV", "glslang-default-resource-limits"])
 
     if env["opengl3"]:
-        env.Append(CPPDEFINES=["GLES3_ENABLED"])
+        env.Append(CPPDEFINES=["GLES3_ENABLED", "GLES2_ENABLED"])
 
     env.Append(LIBS=["pthread"])
 

@@ -53,6 +53,7 @@ if env["d3d12"]:
 if env["opengl3"]:
     SConscript("gl_context/SCsub")
     SConscript("gles3/SCsub")
+    SConscript("gles2/SCsub")
     SConscript("egl/SCsub")
 if env["metal"]:
     if "metal" not in supported:

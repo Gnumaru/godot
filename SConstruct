@@ -45,6 +45,7 @@ def _helper_module(name, path):
 
 
 _helper_module("gles3_builders", "gles3_builders.py")
+_helper_module("gles2_builders", "gles2_builders.py")
 _helper_module("glsl_builders", "glsl_builders.py")
 _helper_module("methods", "methods.py")
 _helper_module("platform_methods", "platform_methods.py")
@@ -54,6 +55,7 @@ _helper_module("main.main_builders", "main/main_builders.py")
 _helper_module("misc.utility.color", "misc/utility/color.py")
 
 # Local
+import gles2_builders
 import gles3_builders
 import glsl_builders
 import methods
@@ -1186,6 +1188,11 @@ GLSL_BUILDERS = {
     ),
     "GLES3_GLSL": env.Builder(
         action=env.Run(gles3_builders.build_gles3_headers),
+        suffix="glsl.gen.h",
+        src_suffix=".glsl",
+    ),
+    "GLES2_GLSL": env.Builder(
+        action=env.Run(gles2_builders.build_gles2_headers),
         suffix="glsl.gen.h",
         src_suffix=".glsl",
     ),

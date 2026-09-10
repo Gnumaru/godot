@@ -532,7 +532,7 @@ def configure_msvc(env: "SConsEnvironment"):
         LIBS += ["libNIR.windows." + env["arch"] + prebuilt_lib_extra_suffix]
 
     if env["opengl3"]:
-        env.AppendUnique(CPPDEFINES=["GLES3_ENABLED"])
+        env.AppendUnique(CPPDEFINES=["GLES3_ENABLED", "GLES2_ENABLED"])
         if env["angle"]:
             angle_path = env["angle_libs"] + "-" + env["arch"] + "-msvc"
             if not os.path.exists(angle_path):
@@ -969,7 +969,7 @@ def configure_mingw(env: "SConsEnvironment"):
         env.Append(LIBS=["version"])  # Mesa dependency.
 
     if env["opengl3"]:
-        env.Append(CPPDEFINES=["GLES3_ENABLED"])
+        env.Append(CPPDEFINES=["GLES3_ENABLED", "GLES2_ENABLED"])
         if env["angle"]:
             angle_path = env["angle_libs"] + "-" + env["arch"] + ("-llvm" if env["use_llvm"] else "-gcc")
             if not os.path.exists(angle_path):

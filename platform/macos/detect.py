@@ -281,7 +281,7 @@ def configure(env: "SConsEnvironment"):
     extra_frameworks = set()
 
     if env["opengl3"]:
-        env.Append(CPPDEFINES=["GLES3_ENABLED"])
+        env.Append(CPPDEFINES=["GLES3_ENABLED", "GLES2_ENABLED"])
         if env["angle"]:
             angle_path = env["angle_libs"] + "-" + env["arch"] + "-macos"
             if not os.path.exists(angle_path):
