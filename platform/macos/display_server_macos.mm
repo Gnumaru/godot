@@ -70,13 +70,18 @@
 // Rendering drivers - include after general Godot deps as they imply system includes
 // which may need precise ordering.
 
-#if defined(GLES3_ENABLED)
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 #if defined(ANGLE_ENABLED)
 #include "gl_manager_macos_angle.h"
 #endif
 #include "gl_manager_macos_legacy.h"
 
+#ifdef GLES3_ENABLED
 #include "drivers/gles3/rasterizer_gles3.h"
+#endif
+#ifdef GLES2_ENABLED
+#include "drivers/gles2/rasterizer_gles2.h"
+#endif
 #endif
 
 #if defined(RD_ENABLED)
@@ -3515,6 +3520,12 @@ Vector<String> DisplayServerMacOS::get_rendering_drivers_func() {
 	drivers.push_back("opengl3_angle");
 #endif
 #endif
+#if defined(GLES2_ENABLED)
+	drivers.push_back("opengl2");
+#if defined(ANGLE_ENABLED)
+	drivers.push_back("opengl2_angle");
+#endif
+#endif
 	drivers.push_back("dummy");
 
 	return drivers;
@@ -3831,13 +3842,17 @@ DisplayServerMacOS::DisplayServerMacOS(const String &p_rendering_driver, Display
 	}
 #endif
 
-#if defined(GLES3_ENABLED)
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 #if defined(ANGLE_ENABLED)
-	if (rendering_driver == "opengl3" && OS::get_singleton()->get_processor_name().contains("Virtual")) {
+	if ((rendering_driver == "opengl3" || rendering_driver == "opengl2") && OS::get_singleton()->get_processor_name().contains("Virtual")) {
 		WARN_PRINT("Virtual Machine detected, switching to ANGLE.");
-		rendering_driver = "opengl3_angle";
+		if (rendering_driver == "opengl2") {
+			rendering_driver = "opengl2_angle";
+		} else {
+			rendering_driver = "opengl3_angle";
+		}
 	}
-	if (rendering_driver == "opengl3_angle") {
+	if (rendering_driver == "opengl3_angle" || rendering_driver == "opengl2_angle") {
 		gl_manager_angle = memnew(GLManagerANGLE_MacOS);
 		if (gl_manager_angle->initialize() != OK || gl_manager_angle->open_display(nullptr) != OK) {
 			memdelete(gl_manager_angle);
@@ -3849,7 +3864,11 @@ DisplayServerMacOS::DisplayServerMacOS(const String &p_rendering_driver, Display
 			bool fallback = GLOBAL_GET("rendering/gl_compatibility/fallback_to_native");
 			if (fallback) {
 				WARN_PRINT("Your video card drivers seem not to support GLES3 / ANGLE, switching to native OpenGL.");
-				rendering_driver = "opengl3";
+				if (rendering_driver == "opengl2_angle") {
+					rendering_driver = "opengl2";
+				} else {
+					rendering_driver = "opengl3";
+				}
 				OS::get_singleton()->set_current_rendering_driver_name(rendering_driver, OS::RENDERING_SOURCE_FALLBACK);
 			} else {
 				r_error = ERR_UNAVAILABLE;
@@ -3858,12 +3877,12 @@ DisplayServerMacOS::DisplayServerMacOS(const String &p_rendering_driver, Display
 		}
 	}
 #else
-	if (rendering_driver == "opengl3" && OS::get_singleton()->get_processor_name().contains("Virtual")) {
+	if ((rendering_driver == "opengl3" || rendering_driver == "opengl2") && OS::get_singleton()->get_processor_name().contains("Virtual")) {
 		r_error = ERR_UNAVAILABLE;
 		ERR_FAIL_MSG("Virtual Machine detected, could not initialize OpenGL.");
 	}
 #endif
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		gl_manager_legacy = memnew(GLManagerLegacy_MacOS);
 		if (gl_manager_legacy->initialize() != OK) {
 			memdelete(gl_manager_legacy);
@@ -3907,13 +3926,37 @@ DisplayServerMacOS::DisplayServerMacOS(const String &p_rendering_driver, Display
 		RasterizerDummy::make_current();
 	}
 
-#if defined(GLES3_ENABLED)
-	if (rendering_driver == "opengl3") {
-		RasterizerGLES3::make_current(true);
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2") {
+			RasterizerGLES2::make_current(true);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(true);
+		}
+#else
+		{
+		}
+#endif
 	}
 #if defined(ANGLE_ENABLED)
-	if (rendering_driver == "opengl3_angle") {
-		RasterizerGLES3::make_current(false);
+	if (rendering_driver == "opengl3_angle" || rendering_driver == "opengl2_angle") {
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2_angle") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 	}
 #endif
 #endif

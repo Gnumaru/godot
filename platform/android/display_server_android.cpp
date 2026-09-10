@@ -55,6 +55,9 @@
 
 #include <EGL/egl.h>
 #endif
+#ifdef GLES2_ENABLED
+#include "drivers/gles2/rasterizer_gles2.h"
+#endif
 
 #if defined(RD_ENABLED)
 static RenderingContextDriver *rendering_context_global = nullptr;
@@ -499,15 +502,15 @@ int64_t DisplayServerAndroid::window_get_native_handle(DisplayServerEnums::Handl
 		case DisplayServerEnums::WINDOW_VIEW: {
 			return 0; // Not supported.
 		}
-#ifdef GLES3_ENABLED
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 		case DisplayServerEnums::DISPLAY_HANDLE: {
-			if (rendering_driver == "opengl3") {
+			if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 				return reinterpret_cast<int64_t>(eglGetCurrentDisplay());
 			}
 			return 0;
 		}
 		case DisplayServerEnums::OPENGL_CONTEXT: {
-			if (rendering_driver == "opengl3") {
+			if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 				return reinterpret_cast<int64_t>(eglGetCurrentContext());
 			}
 			return 0;
@@ -661,6 +664,9 @@ Vector<String> DisplayServerAndroid::get_rendering_drivers_func() {
 #ifdef GLES3_ENABLED
 	drivers.push_back("opengl3");
 #endif
+#ifdef GLES2_ENABLED
+	drivers.push_back("opengl2");
+#endif
 #ifdef VULKAN_ENABLED
 	drivers.push_back("vulkan");
 #endif
@@ -705,7 +711,7 @@ bool DisplayServerAndroid::check_vulkan_global_context(bool p_vulkan_requirement
 				rendering_context_global = nullptr;
 			}
 
-#if defined(GLES3_ENABLED)
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 			if (fallback_to_opengl3) {
 				WARN_PRINT("Your device does not seem to support Vulkan, switching to OpenGL 3.");
 				OS::get_singleton()->set_current_rendering_driver_name("opengl3", OS::RENDERING_SOURCE_FALLBACK);
@@ -830,9 +836,21 @@ DisplayServerAndroid::DisplayServerAndroid(const String &p_rendering_driver, Dis
 	}
 #endif
 
-#if defined(GLES3_ENABLED)
-	if (rendering_driver == "opengl3") {
-		RasterizerGLES3::make_current(false);
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 	}
 #endif
 

@@ -156,15 +156,28 @@ DisplayServerAppleEmbedded::DisplayServerAppleEmbedded(const String &p_rendering
 	}
 #endif
 
-#if defined(GLES3_ENABLED)
-	if (rendering_driver == "opengl3") {
-		CALayer *layer = [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:@"opengl3"];
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
+		NSString *driver_str = (rendering_driver == "opengl2") ? @"opengl2" : @"opengl3";
+		CALayer *layer = [GDTAppDelegateService.viewController.godotView initializeRenderingForDriver:driver_str];
 
 		if (!layer) {
 			ERR_FAIL_MSG("Failed to create iOS OpenGLES rendering layer.");
 		}
 
-		RasterizerGLES3::make_current(false);
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 		has_made_render_compositor_current = true;
 	}
 #endif
@@ -213,6 +226,9 @@ Vector<String> DisplayServerAppleEmbedded::get_rendering_drivers_func() {
 #endif
 #if defined(GLES3_ENABLED)
 	drivers.push_back("opengl3");
+#endif
+#if defined(GLES2_ENABLED)
+	drivers.push_back("opengl2");
 #endif
 
 	return drivers;

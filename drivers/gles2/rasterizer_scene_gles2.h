@@ -44,57 +44,57 @@
 
 class RenderSceneBuffersGLES2;
 
-enum RenderListType {
-	RENDER_LIST_OPAQUE, //used for opaque objects
-	RENDER_LIST_ALPHA, //used for transparent objects
-	RENDER_LIST_SECONDARY, //used for shadows and other objects
-	RENDER_LIST_MAX
+enum RenderListTypeGLES2 {
+	RENDER_LIST_OPAQUE_GLES2, //used for opaque objects
+	RENDER_LIST_ALPHA_GLES2, //used for transparent objects
+	RENDER_LIST_SECONDARY_GLES2, //used for shadows and other objects
+	RENDER_LIST_MAX_GLES2
 };
 
-enum PassMode {
-	PASS_MODE_COLOR,
-	PASS_MODE_COLOR_TRANSPARENT,
-	PASS_MODE_SHADOW,
-	PASS_MODE_DEPTH,
-	PASS_MODE_MATERIAL,
-	PASS_MODE_MOTION_VECTORS,
+enum PassModeGLES2 {
+	PASS_MODE_COLOR_GLES2,
+	PASS_MODE_COLOR_TRANSPARENT_GLES2,
+	PASS_MODE_SHADOW_GLES2,
+	PASS_MODE_DEPTH_GLES2,
+	PASS_MODE_MATERIAL_GLES2,
+	PASS_MODE_MOTION_VECTORS_GLES2,
 };
 
 // These should share as much as possible with SkyUniform Location
-enum SceneUniformLocation {
-	SCENE_TONEMAP_UNIFORM_LOCATION,
-	SCENE_GLOBALS_UNIFORM_LOCATION,
-	SCENE_DATA_UNIFORM_LOCATION,
-	SCENE_MATERIAL_UNIFORM_LOCATION,
-	SCENE_EMPTY1, // Unused, put here to avoid conflicts with SKY_DIRECTIONAL_LIGHT_UNIFORM_LOCATION.
-	SCENE_OMNILIGHT_UNIFORM_LOCATION,
-	SCENE_SPOTLIGHT_UNIFORM_LOCATION,
-	SCENE_AREALIGHT_UNIFORM_LOCATION,
-	SCENE_DIRECTIONAL_LIGHT_UNIFORM_LOCATION,
-	SCENE_MULTIVIEW_UNIFORM_LOCATION,
-	SCENE_POSITIONAL_SHADOW_UNIFORM_LOCATION,
-	SCENE_DIRECTIONAL_SHADOW_UNIFORM_LOCATION,
-	SCENE_EMPTY2, // Unused, put here to avoid conflicts with SKY_MULTIVIEW_UNIFORM_LOCATION.
-	SCENE_PREV_DATA_UNIFORM_LOCATION,
-	SCENE_PREV_MULTIVIEW_UNIFORM_LOCATION,
+enum SceneUniformLocationGLES2 {
+	SCENE_TONEMAP_UNIFORM_LOCATION_GLES2,
+	SCENE_GLOBALS_UNIFORM_LOCATION_GLES2,
+	SCENE_DATA_UNIFORM_LOCATION_GLES2,
+	SCENE_MATERIAL_UNIFORM_LOCATION_GLES2,
+	SCENE_EMPTY1_GLES2, // Unused, put here to avoid conflicts with SKY_DIRECTIONAL_LIGHT_UNIFORM_LOCATION_GLES2.
+	SCENE_OMNILIGHT_UNIFORM_LOCATION_GLES2,
+	SCENE_SPOTLIGHT_UNIFORM_LOCATION_GLES2,
+	SCENE_AREALIGHT_UNIFORM_LOCATION_GLES2,
+	SCENE_DIRECTIONAL_LIGHT_UNIFORM_LOCATION_GLES2,
+	SCENE_MULTIVIEW_UNIFORM_LOCATION_GLES2,
+	SCENE_POSITIONAL_SHADOW_UNIFORM_LOCATION_GLES2,
+	SCENE_DIRECTIONAL_SHADOW_UNIFORM_LOCATION_GLES2,
+	SCENE_EMPTY2_GLES2, // Unused, put here to avoid conflicts with SKY_MULTIVIEW_UNIFORM_LOCATION_GLES2.
+	SCENE_PREV_DATA_UNIFORM_LOCATION_GLES2,
+	SCENE_PREV_MULTIVIEW_UNIFORM_LOCATION_GLES2,
 };
 
-enum SkyUniformLocation {
-	SKY_TONEMAP_UNIFORM_LOCATION,
-	SKY_GLOBALS_UNIFORM_LOCATION,
-	SKY_EMPTY1, // Unused, put here to avoid conflicts with SCENE_DATA_UNIFORM_LOCATION.
-	SKY_MATERIAL_UNIFORM_LOCATION,
-	SKY_DIRECTIONAL_LIGHT_UNIFORM_LOCATION,
-	SKY_EMPTY2, // Unused, put here to avoid conflicts with SCENE_OMNILIGHT_UNIFORM_LOCATION.
-	SKY_EMPTY3, // Unused, put here to avoid conflicts with SCENE_SPOTLIGHT_UNIFORM_LOCATION.
-	SKY_EMPTY4, // Unused, put here to avoid conflicts with SCENE_AREALIGHT_UNIFORM_LOCATION.
-	SKY_EMPTY5, // Unused, put here to avoid conflicts with SCENE_DIRECTIONAL_LIGHT_UNIFORM_LOCATION.
-	SKY_EMPTY6, // Unused, put here to avoid conflicts with SCENE_MULTIVIEW_UNIFORM_LOCATION.
-	SKY_EMPTY7, // Unused, put here to avoid conflicts with SCENE_POSITIONAL_SHADOW_UNIFORM_LOCATION.
-	SKY_EMPTY8, // Unused, put here to avoid conflicts with SCENE_DIRECTIONAL_SHADOW_UNIFORM_LOCATION.
-	SKY_MULTIVIEW_UNIFORM_LOCATION,
-	SKY_EMPTY9, // Unused, put here to avoid conflicts with SCENE_PREV_DATA_UNIFORM_LOCATION.
-	SKY_EMPTY10, // Unused, put here to avoid conflicts with SCENE_PREV_MULTIVIEW_UNIFORM_LOCATION.
+enum SkyUniformLocationGLES2 {
+	SKY_TONEMAP_UNIFORM_LOCATION_GLES2,
+	SKY_GLOBALS_UNIFORM_LOCATION_GLES2,
+	SKY_EMPTY1_GLES2, // Unused, put here to avoid conflicts with SCENE_DATA_UNIFORM_LOCATION_GLES2.
+	SKY_MATERIAL_UNIFORM_LOCATION_GLES2,
+	SKY_DIRECTIONAL_LIGHT_UNIFORM_LOCATION_GLES2,
+	SKY_EMPTY2_GLES2, // Unused, put here to avoid conflicts with SCENE_OMNILIGHT_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY3_GLES2, // Unused, put here to avoid conflicts with SCENE_SPOTLIGHT_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY4_GLES2, // Unused, put here to avoid conflicts with SCENE_AREALIGHT_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY5_GLES2, // Unused, put here to avoid conflicts with SCENE_DIRECTIONAL_LIGHT_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY6_GLES2, // Unused, put here to avoid conflicts with SCENE_MULTIVIEW_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY7_GLES2, // Unused, put here to avoid conflicts with SCENE_POSITIONAL_SHADOW_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY8_GLES2, // Unused, put here to avoid conflicts with SCENE_DIRECTIONAL_SHADOW_UNIFORM_LOCATION_GLES2.
+	SKY_MULTIVIEW_UNIFORM_LOCATION_GLES2,
+	SKY_EMPTY9_GLES2, // Unused, put here to avoid conflicts with SCENE_PREV_DATA_UNIFORM_LOCATION_GLES2.
+	SKY_EMPTY10_GLES2, // Unused, put here to avoid conflicts with SCENE_PREV_MULTIVIEW_UNIFORM_LOCATION_GLES2.
 };
 
 struct RenderDataGLES2 {
@@ -737,18 +737,18 @@ private:
 		}
 	};
 
-	RenderList render_list[RENDER_LIST_MAX];
+	RenderList render_list[RENDER_LIST_MAX_GLES2];
 
 	void _update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_index, uint32_t p_size, const void *p_source_data, String p_name = "");
 
 	void _setup_lights(const RenderDataGLES2 *p_render_data, bool p_using_shadows, uint32_t &r_directional_light_count, uint32_t &r_omni_light_count, uint32_t &r_spot_light_count, uint32_t &r_area_light_count, uint32_t &r_directional_shadow_count);
 	void _setup_environment(const RenderDataGLES2 *p_render_data, bool p_no_fog, const Size2i &p_screen_size, bool p_flip_y, const Color &p_default_bg_color, bool p_pancake_shadows, float p_shadow_bias = 0.0);
-	void _fill_render_list(RenderListType p_render_list, const RenderDataGLES2 *p_render_data, PassMode p_pass_mode, bool p_append = false);
+	void _fill_render_list(RenderListTypeGLES2 p_render_list, const RenderDataGLES2 *p_render_data, PassModeGLES2 p_pass_mode, bool p_append = false);
 	void _render_shadows(const RenderDataGLES2 *p_render_data, const Size2i &p_viewport_size = Size2i(1, 1));
 	void _render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier = 0, float p_screen_mesh_lod_threshold = 0.0, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D());
 	void _render_post_processing(const RenderDataGLES2 *p_render_data);
 
-	template <PassMode p_pass_mode>
+	template <PassModeGLES2 p_pass_mode>
 	_FORCE_INLINE_ void _render_list_template(RenderListParameters *p_params, const RenderDataGLES2 *p_render_data, uint32_t p_from_element, uint32_t p_to_element, bool p_alpha_pass = false);
 
 	_FORCE_INLINE_ uint32_t _indices_to_primitives(RSE::PrimitiveType p_primitive, uint32_t p_indices) const;

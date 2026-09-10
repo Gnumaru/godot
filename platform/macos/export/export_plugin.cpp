@@ -1896,7 +1896,7 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 	int export_angle = p_preset->get("application/export_angle");
 	bool include_angle_libs = false;
 	if (export_angle == 0) {
-		include_angle_libs = String(get_project_setting(p_preset, "rendering/gl_compatibility/driver.macos")) == "opengl3_angle";
+		include_angle_libs = (String(get_project_setting(p_preset, "rendering/gl_compatibility/driver.macos")) == "opengl3_angle" || String(get_project_setting(p_preset, "rendering/gl_compatibility/driver.macos")) == "opengl2_angle");
 	} else if (export_angle == 1) {
 		include_angle_libs = true;
 	}

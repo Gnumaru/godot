@@ -254,7 +254,7 @@ Error EditorExportPlatformWindows::export_project(const Ref<EditorExportPreset> 
 	int export_angle = p_preset->get("application/export_angle");
 	bool include_angle_libs = false;
 	if (export_angle == 0) {
-		include_angle_libs = (String(get_project_setting(p_preset, "rendering/gl_compatibility/driver.windows")) == "opengl3_angle") && (String(get_project_setting(p_preset, "rendering/renderer/rendering_method")) == "gl_compatibility");
+		include_angle_libs = (String(get_project_setting(p_preset, "rendering/gl_compatibility/driver.windows")) == "opengl3_angle" || String(get_project_setting(p_preset, "rendering/gl_compatibility/driver.windows")) == "opengl2_angle") && (String(get_project_setting(p_preset, "rendering/renderer/rendering_method")) == "gl_compatibility");
 	} else if (export_angle == 1) {
 		include_angle_libs = true;
 	}

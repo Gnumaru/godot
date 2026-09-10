@@ -77,7 +77,7 @@ OpenXRFBFoveationExtension::OpenXRFBFoveationExtension(const String &p_rendering
 	meta_vulkan_swapchain_create_info.additionalUsageFlags = 0;
 #endif
 
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		swapchain_create_info_foveation_fb.flags = XR_SWAPCHAIN_CREATE_FOVEATION_SCALED_BIN_BIT_FB;
 	} else if (rendering_driver == "vulkan") {
 		swapchain_create_info_foveation_fb.flags = XR_SWAPCHAIN_CREATE_FOVEATION_FRAGMENT_DENSITY_MAP_BIT_FB;

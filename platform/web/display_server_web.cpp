@@ -49,6 +49,9 @@
 #ifdef GLES3_ENABLED
 #include "drivers/gles3/rasterizer_gles3.h"
 #endif
+#ifdef GLES2_ENABLED
+#include "drivers/gles2/rasterizer_gles2.h"
+#endif
 
 #include <emscripten.h>
 #include <png.h>
@@ -1006,6 +1009,9 @@ Vector<String> DisplayServerWeb::get_rendering_drivers_func() {
 #ifdef GLES3_ENABLED
 	drivers.push_back("opengl3");
 #endif
+#ifdef GLES2_ENABLED
+	drivers.push_back("opengl2");
+#endif
 	return drivers;
 }
 
@@ -1131,7 +1137,7 @@ DisplayServerWeb::DisplayServerWeb(const String &p_rendering_driver, DisplayServ
 	// Expose method for requesting quit.
 	godot_js_os_request_quit_cb(request_quit_callback);
 
-#ifdef GLES3_ENABLED
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 	bool webgl2_inited = false;
 	if (godot_js_display_has_webgl(2)) {
 		EmscriptenWebGLContextAttributes attributes;
@@ -1148,7 +1154,19 @@ DisplayServerWeb::DisplayServerWeb(const String &p_rendering_driver, DisplayServ
 		if (!emscripten_webgl_enable_extension(webgl_ctx, "OVR_multiview2")) {
 			print_verbose("Failed to enable WebXR extension.");
 		}
-		RasterizerGLES3::make_current(false);
+#ifdef GLES2_ENABLED
+		if (p_rendering_driver == "opengl2") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 
 	} else {
 		OS::get_singleton()->alert(
@@ -1190,7 +1208,7 @@ DisplayServerWeb::~DisplayServerWeb() {
 		memdelete(native_menu);
 		native_menu = nullptr;
 	}
-#ifdef GLES3_ENABLED
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 	if (webgl_ctx) {
 		emscripten_webgl_commit_frame();
 		emscripten_webgl_destroy_context(webgl_ctx);
@@ -1508,7 +1526,7 @@ bool DisplayServerWeb::get_swap_cancel_ok() {
 }
 
 void DisplayServerWeb::swap_buffers() {
-#ifdef GLES3_ENABLED
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 	if (webgl_ctx) {
 		emscripten_webgl_commit_frame();
 	}

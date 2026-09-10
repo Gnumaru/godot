@@ -41,10 +41,15 @@
 #import "core/os/os.h"
 #import "servers/display/native_menu.h"
 
-#if defined(GLES3_ENABLED)
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 #import "embedded_gl_manager.h"
 
+#ifdef GLES3_ENABLED
 #import "drivers/gles3/rasterizer_gles3.h"
+#endif
+#ifdef GLES2_ENABLED
+#import "drivers/gles2/rasterizer_gles2.h"
+#endif
 
 #import <platform_gl.h>
 #endif
@@ -120,14 +125,18 @@ DisplayServerMacOSEmbedded::DisplayServerMacOSEmbedded(const String &p_rendering
 	}
 #endif
 
-#if defined(GLES3_ENABLED)
-	if (rendering_driver == "opengl3_angle") {
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3_angle" || rendering_driver == "opengl2_angle") {
 		WARN_PRINT("ANGLE not supported for embedded display, switching to native OpenGL.");
-		rendering_driver = "opengl3";
+		if (rendering_driver == "opengl2_angle") {
+			rendering_driver = "opengl2";
+		} else {
+			rendering_driver = "opengl3";
+		}
 		OS::get_singleton()->set_current_rendering_driver_name(rendering_driver, OS::RENDERING_SOURCE_FALLBACK);
 	}
 
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		gl_manager = memnew(GLManagerEmbedded);
 		if (gl_manager->initialize() != OK) {
 			memdelete(gl_manager);
@@ -181,12 +190,36 @@ DisplayServerMacOSEmbedded::DisplayServerMacOSEmbedded(const String &p_rendering
 	}
 #endif
 
-#if defined(GLES3_ENABLED)
-	if (rendering_driver == "opengl3") {
-		RasterizerGLES3::make_current(true);
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2") {
+			RasterizerGLES2::make_current(true);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(true);
+		}
+#else
+		{
+		}
+#endif
 	}
-	if (rendering_driver == "opengl3_angle") {
-		RasterizerGLES3::make_current(false);
+	if (rendering_driver == "opengl3_angle" || rendering_driver == "opengl2_angle") {
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2_angle") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 	}
 #endif
 #if defined(RD_ENABLED)
@@ -265,6 +298,9 @@ Vector<String> DisplayServerMacOSEmbedded::get_rendering_drivers_func() {
 #endif
 #if defined(GLES3_ENABLED)
 	drivers.push_back("opengl3");
+#endif
+#if defined(GLES2_ENABLED)
+	drivers.push_back("opengl2");
 #endif
 
 	return drivers;

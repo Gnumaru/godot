@@ -71,6 +71,9 @@
 #if defined(GLES3_ENABLED)
 #include "drivers/gles3/rasterizer_gles3.h"
 #endif
+#if defined(GLES2_ENABLED)
+#include "drivers/gles2/rasterizer_gles2.h"
+#endif
 
 #include <avrt.h>
 #include <dwmapi.h>
@@ -8128,7 +8131,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 
 	bool rendering_driver_failed = rendering_driver_count != 0 && rendering_context == nullptr;
 
-#ifdef GLES3_ENABLED
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 	if (rendering_driver_failed) {
 		bool fallback_to_opengl3 = GLOBAL_GET("rendering/rendering_device/fallback_to_opengl3");
 		if (fallback_to_opengl3) {
@@ -8148,13 +8151,13 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 	}
 #endif
 
-#if defined(GLES3_ENABLED)
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 #if defined(ANGLE_ENABLED)
 	bool fallback = GLOBAL_GET("rendering/gl_compatibility/fallback_to_angle");
 	bool show_warning = true;
 #endif
 
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		// There's no native OpenGL drivers on Windows for ARM, always enable fallback.
 #if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
 #if defined(ANGLE_ENABLED)
@@ -8189,7 +8192,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 
 #if defined(ANGLE_ENABLED)
 	bool gl_supported = true;
-	if (fallback && !is_wine && (rendering_driver == "opengl3")) {
+	if (fallback && !is_wine && (rendering_driver == "opengl3" || rendering_driver == "opengl2")) {
 		Dictionary gl_info = detect_wgl();
 
 		bool force_angle = false;
@@ -8229,12 +8232,16 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 					WARN_PRINT("Your video card drivers are known to have low quality OpenGL 3.3 support, switching to ANGLE.");
 				}
 			}
-			rendering_driver = "opengl3_angle";
+			if (rendering_driver == "opengl2") {
+				rendering_driver = "opengl2_angle";
+			} else {
+				rendering_driver = "opengl3_angle";
+			}
 			OS::get_singleton()->set_current_rendering_driver_name(rendering_driver, OS::RENDERING_SOURCE_FALLBACK);
 		}
 	}
 
-	if (rendering_driver == "opengl3_angle") {
+	if (rendering_driver == "opengl3_angle" || rendering_driver == "opengl2_angle") {
 		gl_manager_angle = memnew(GLManagerANGLE_Windows);
 		tested_drivers.set_flag(DRIVER_ID_COMPAT_ANGLE_D3D11);
 
@@ -8244,7 +8251,11 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 			bool fallback_to_native = GLOBAL_GET("rendering/gl_compatibility/fallback_to_native");
 			if (fallback_to_native && gl_supported) {
 				WARN_PRINT("Your video card drivers seem not to support GLES3 / ANGLE, switching to native OpenGL.");
-				rendering_driver = "opengl3";
+				if (rendering_driver == "opengl2_angle") {
+					rendering_driver = "opengl2";
+				} else {
+					rendering_driver = "opengl3";
+				}
 			} else {
 				r_error = ERR_UNAVAILABLE;
 				ERR_FAIL_MSG("Could not initialize ANGLE OpenGL.");
@@ -8252,7 +8263,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 		}
 	}
 #endif // ANGLE_ENABLED
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		gl_manager_native = memnew(GLManagerNative_Windows);
 		tested_drivers.set_flag(DRIVER_ID_COMPAT_OPENGL3);
 
@@ -8292,8 +8303,8 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 	}
 	++window_id_counter;
 
-#ifdef GLES3_ENABLED
-	if (rendering_driver == "opengl3") {
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		if (_create_gl_window(DisplayServerEnums::MAIN_WINDOW_ID) != OK) {
 			memdelete(gl_manager_native);
 			gl_manager_native = nullptr;
@@ -8301,10 +8312,22 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 			r_error = ERR_UNAVAILABLE;
 			return;
 		}
-		RasterizerGLES3::make_current(true);
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2") {
+			RasterizerGLES2::make_current(true);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(true);
+		}
+#else
+		{
+		}
+#endif
 	}
 #ifdef ANGLE_ENABLED
-	if (rendering_driver == "opengl3_angle") {
+	if (rendering_driver == "opengl3_angle" || rendering_driver == "opengl2_angle") {
 		if (_create_gl_window(DisplayServerEnums::MAIN_WINDOW_ID) != OK) {
 			memdelete(gl_manager_angle);
 			gl_manager_angle = nullptr;
@@ -8312,7 +8335,19 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Dis
 			r_error = ERR_UNAVAILABLE;
 			return;
 		}
-		RasterizerGLES3::make_current(false);
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2_angle") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 	}
 #endif
 #endif
@@ -8406,6 +8441,12 @@ Vector<String> DisplayServerWindows::get_rendering_drivers_func() {
 	drivers.push_back("opengl3");
 #ifdef ANGLE_ENABLED
 	drivers.push_back("opengl3_angle");
+#endif
+#endif
+#ifdef GLES2_ENABLED
+	drivers.push_back("opengl2");
+#ifdef ANGLE_ENABLED
+	drivers.push_back("opengl2_angle");
 #endif
 #endif
 	drivers.push_back("dummy");

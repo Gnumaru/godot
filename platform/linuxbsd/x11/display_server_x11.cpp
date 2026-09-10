@@ -73,12 +73,17 @@
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #endif
 
-#ifdef GLES3_ENABLED
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 #include "x11/detect_prime_x11.h"
 #include "x11/gl_manager_x11.h"
 #include "x11/gl_manager_x11_egl.h"
 
+#ifdef GLES3_ENABLED
 #include "drivers/gles3/rasterizer_gles3.h"
+#endif
+#ifdef GLES2_ENABLED
+#include "drivers/gles2/rasterizer_gles2.h"
+#endif
 #endif
 
 #ifdef DBUS_ENABLED
@@ -6326,6 +6331,10 @@ Vector<String> DisplayServerX11::get_rendering_drivers_func() {
 	drivers.push_back("opengl3");
 	drivers.push_back("opengl3_es");
 #endif
+#ifdef GLES2_ENABLED
+	drivers.push_back("opengl2");
+	drivers.push_back("opengl2_es");
+#endif
 	drivers.push_back("dummy");
 
 	return drivers;
@@ -7118,9 +7127,9 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 		if (rendering_context->initialize() != OK) {
 			memdelete(rendering_context);
 			rendering_context = nullptr;
-#if defined(GLES3_ENABLED)
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
 			bool fallback_to_opengl3 = GLOBAL_GET("rendering/rendering_device/fallback_to_opengl3");
-			if (fallback_to_opengl3 && rendering_driver != "opengl3") {
+			if (fallback_to_opengl3 && rendering_driver != "opengl3" && rendering_driver != "opengl2") {
 				WARN_PRINT("Your video card drivers seem not to support the required Vulkan version, switching to OpenGL 3.");
 				rendering_driver = "opengl3";
 				OS::get_singleton()->set_current_rendering_method("gl_compatibility", OS::RENDERING_SOURCE_FALLBACK);
@@ -7148,8 +7157,8 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 	}
 #endif // RD_ENABLED
 
-#if defined(GLES3_ENABLED)
-	if (rendering_driver == "opengl3" || rendering_driver == "opengl3_es") {
+#if defined(GLES3_ENABLED) || defined(GLES2_ENABLED)
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl3_es" || rendering_driver == "opengl2" || rendering_driver == "opengl2_es") {
 		if (getenv("DRI_PRIME") == nullptr) {
 			int use_prime = -1;
 
@@ -7191,7 +7200,7 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 			}
 		}
 	}
-	if (rendering_driver == "opengl3") {
+	if (rendering_driver == "opengl3" || rendering_driver == "opengl2") {
 		gl_manager = memnew(GLManager_X11(p_resolution, GLManager_X11::GLES_3_0_COMPATIBLE));
 		if (gl_manager->initialize(x11_display) != OK || gl_manager->open_display(x11_display) != OK) {
 			memdelete(gl_manager);
@@ -7199,7 +7208,11 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 			bool fallback = GLOBAL_GET("rendering/gl_compatibility/fallback_to_gles");
 			if (fallback) {
 				WARN_PRINT("Your video card drivers seem not to support the required OpenGL version, switching to OpenGLES.");
-				rendering_driver = "opengl3_es";
+				if (rendering_driver == "opengl2") {
+					rendering_driver = "opengl2_es";
+				} else {
+					rendering_driver = "opengl3_es";
+				}
 				OS::get_singleton()->set_current_rendering_driver_name(rendering_driver, OS::RENDERING_SOURCE_FALLBACK);
 			} else {
 				r_error = ERR_UNAVAILABLE;
@@ -7217,11 +7230,23 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 			}
 		} else {
 			driver_found = true;
-			RasterizerGLES3::make_current(true);
+#ifdef GLES2_ENABLED
+			if (rendering_driver == "opengl2") {
+				RasterizerGLES2::make_current(true);
+			} else
+#endif
+#ifdef GLES3_ENABLED
+			{
+				RasterizerGLES3::make_current(true);
+			}
+#else
+			{
+			}
+#endif
 		}
 	}
 
-	if (rendering_driver == "opengl3_es") {
+	if (rendering_driver == "opengl3_es" || rendering_driver == "opengl2_es") {
 		gl_manager_egl = memnew(GLManagerEGL_X11);
 		if (gl_manager_egl->initialize() != OK || gl_manager_egl->open_display(x11_display) != OK) {
 			memdelete(gl_manager_egl);
@@ -7237,10 +7262,22 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 			ERR_FAIL_MSG("Could not initialize OpenGL ES.");
 		}
 		driver_found = true;
-		RasterizerGLES3::make_current(false);
+#ifdef GLES2_ENABLED
+		if (rendering_driver == "opengl2_es") {
+			RasterizerGLES2::make_current(false);
+		} else
+#endif
+#ifdef GLES3_ENABLED
+		{
+			RasterizerGLES3::make_current(false);
+		}
+#else
+		{
+		}
+#endif
 	}
 
-#endif // GLES3_ENABLED
+#endif // GLES3_ENABLED || GLES2_ENABLED
 
 	if (!driver_found) {
 		r_error = ERR_UNAVAILABLE;

@@ -39,7 +39,12 @@
 #include "core/os/os.h"
 
 #ifdef WINDOWS_ENABLED
+#ifdef GLES3_ENABLED
 #include "drivers/gles3/rasterizer_gles3.h"
+#endif
+#ifdef GLES2_ENABLED
+#include "drivers/gles2/rasterizer_gles2.h"
+#endif
 #endif
 
 #if defined(EGL_STATIC)
@@ -385,7 +390,12 @@ void EGLManager::window_make_current(DisplayServerEnums::WindowID p_window_id) {
 	eglMakeCurrent(current_display.egl_display, current_window->egl_surface, current_window->egl_surface, current_display.egl_context);
 
 #ifdef WINDOWS_ENABLED
+#ifdef GLES3_ENABLED
 	RasterizerGLES3::set_screen_flipped_y(glwindow.flipped_y);
+#endif
+#ifdef GLES2_ENABLED
+	RasterizerGLES2::set_screen_flipped_y(glwindow.flipped_y);
+#endif
 #endif
 }
 

@@ -6088,6 +6088,16 @@ String EditorNode::_get_system_info() const {
 		} else {
 			driver_name = "OpenGL ES 3";
 		}
+	} else if (driver_name == "opengl2_angle") {
+		driver_name = "OpenGL ES 2/ANGLE";
+	} else if (driver_name == "opengl2_es") {
+		driver_name = "OpenGL ES 2";
+	} else if (driver_name == "opengl2") {
+		if (OS::get_singleton()->get_gles_over_gl()) {
+			driver_name = "OpenGL 2";
+		} else {
+			driver_name = "OpenGL ES 2";
+		}
 	} else if (driver_name == "metal") {
 		driver_name = "Metal";
 	}
