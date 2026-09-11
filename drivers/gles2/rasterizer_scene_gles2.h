@@ -478,13 +478,116 @@ private:
 
 		UBO data;
 		UBO prev_data;
-		GLuint ubo_buffer = 0;
-		GLuint prev_ubo_buffer = 0;
 		MultiviewUBO multiview_data;
 		MultiviewUBO prev_multiview_data;
-		GLuint multiview_buffer = 0;
-		GLuint prev_multiview_buffer = 0;
-		GLuint tonemap_buffer = 0;
+		// GLES2 simplification: persisted for plain-uniform upload (no UBO).
+		// Initialized from the environment in post-processing, like the old buffer.
+		TonemapUBO tonemap_data;
+
+		// GLES2 simplification: per-program location caches for plain uniforms
+		// (no UBOs). Each entry also tracks the last uploaded frame.
+		struct ProgramUniforms {
+			// SceneDataBlock members (dotted: "scene_data_block.data.*").
+			GLint projection_matrix = -1;
+			GLint inv_projection_matrix = -1;
+			GLint inv_view_matrix = -1;
+			GLint view_matrix = -1;
+			GLint main_cam_inv_view_matrix = -1;
+			GLint viewport_size = -1;
+			GLint screen_pixel_size = -1;
+			GLint ambient_light_color_energy = -1;
+			GLint ambient_color_sky_mix = -1;
+			GLint directional_shadow_count = -1;
+			GLint emissive_exposure_normalization = -1;
+			GLint use_ambient_light = -1;
+			GLint use_ambient_cubemap = -1;
+			GLint use_reflection_cubemap = -1;
+			GLint fog_aerial_perspective = -1;
+			GLint time = -1;
+			GLint radiance_inverse_xform = -1;
+			GLint directional_light_count = -1;
+			GLint z_far = -1;
+			GLint z_near = -1;
+			GLint ibl_exposure_normalization = -1;
+			GLint fog_enabled = -1;
+			GLint fog_mode = -1;
+			GLint fog_density = -1;
+			GLint fog_height = -1;
+			GLint fog_height_density = -1;
+			GLint fog_depth_curve = -1;
+			GLint fog_sun_scatter = -1;
+			GLint fog_depth_begin = -1;
+			GLint fog_light_color = -1;
+			GLint fog_depth_end = -1;
+			GLint shadow_bias = -1;
+			GLint luminance_multiplier = -1;
+			GLint camera_visible_layers = -1;
+			GLint pancake_shadows = -1;
+			// PrevSceneDataBlock (same members, prev_ prefix in shader).
+			GLint prev_projection_matrix = -1;
+			GLint prev_inv_projection_matrix = -1;
+			GLint prev_inv_view_matrix = -1;
+			GLint prev_view_matrix = -1;
+			GLint prev_main_cam_inv_view_matrix = -1;
+			GLint prev_viewport_size = -1;
+			GLint prev_screen_pixel_size = -1;
+			GLint prev_ambient_light_color_energy = -1;
+			GLint prev_ambient_color_sky_mix = -1;
+			GLint prev_directional_shadow_count = -1;
+			GLint prev_emissive_exposure_normalization = -1;
+			GLint prev_use_ambient_light = -1;
+			GLint prev_use_ambient_cubemap = -1;
+			GLint prev_use_reflection_cubemap = -1;
+			GLint prev_fog_aerial_perspective = -1;
+			GLint prev_time = -1;
+			GLint prev_radiance_inverse_xform = -1;
+			GLint prev_directional_light_count = -1;
+			GLint prev_z_far = -1;
+			GLint prev_z_near = -1;
+			GLint prev_ibl_exposure_normalization = -1;
+			GLint prev_fog_enabled = -1;
+			GLint prev_fog_mode = -1;
+			GLint prev_fog_density = -1;
+			GLint prev_fog_height = -1;
+			GLint prev_fog_height_density = -1;
+			GLint prev_fog_depth_curve = -1;
+			GLint prev_fog_sun_scatter = -1;
+			GLint prev_fog_depth_begin = -1;
+			GLint prev_fog_light_color = -1;
+			GLint prev_fog_depth_end = -1;
+			GLint prev_shadow_bias = -1;
+			GLint prev_luminance_multiplier = -1;
+			GLint prev_camera_visible_layers = -1;
+			GLint prev_pancake_shadows = -1;
+			// MultiviewDataBlock (+prev) and TonemapData members.
+			GLint mv_projection_matrix_view = -1;
+			GLint mv_inv_projection_matrix_view = -1;
+			GLint mv_eye_offset = -1;
+			GLint prev_mv_projection_matrix_view = -1;
+			GLint prev_mv_inv_projection_matrix_view = -1;
+			GLint prev_mv_eye_offset = -1;
+			GLint tonemap_exposure = -1;
+			GLint tonemap_tonemapper = -1;
+			GLint tonemap_tonemapper_params = -1;
+			GLint tonemap_brightness = -1;
+			GLint tonemap_contrast = -1;
+			GLint tonemap_saturation = -1;
+			// Global table (conditional).
+			GLint global_table = -1;
+			// Sky directional array bases (queried per member below).
+			GLint sky_dir_energy = -1;
+			GLint sky_dir_color = -1;
+			GLint sky_dir_enabled = -1;
+			GLint sky_dir_shadow_opacity = -1;
+			GLint sky_dir_specular = -1;
+			GLint sky_dir_mask = -1;
+			// Sky multiview block uses direct members (no .data nesting).
+			GLint sky_mv_projection_matrix_view = -1;
+			GLint sky_mv_inv_projection_matrix_view = -1;
+			GLint sky_mv_eye_offset = -1;
+			uint64_t frame = 0;
+		};
+		HashMap<GLuint, ProgramUniforms> program_uniforms;
 
 		int prev_data_state = 0; // 0 = Motion vectors not used, 1 = use data (first frame only), 2 = use previous data
 
@@ -740,6 +843,12 @@ private:
 	RenderList render_list[RENDER_LIST_MAX_GLES2];
 
 	void _update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_index, uint32_t p_size, const void *p_source_data, String p_name = "");
+
+	// GLES2 simplification: plain-uniform uploads (no UBOs), once per program
+	// per frame. Locations are cached in program_uniforms.
+	void _ensure_scene_program_uniforms(GLuint p_program, ProgramUniforms &r_cache);
+	void _set_scene_state_uniforms(RID p_version, SceneShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
+	void _set_sky_uniforms(RID p_version, SkyShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
 
 	void _setup_lights(const RenderDataGLES2 *p_render_data, bool p_using_shadows, uint32_t &r_directional_light_count, uint32_t &r_omni_light_count, uint32_t &r_spot_light_count, uint32_t &r_area_light_count, uint32_t &r_directional_shadow_count);
 	void _setup_environment(const RenderDataGLES2 *p_render_data, bool p_no_fog, const Size2i &p_screen_size, bool p_flip_y, const Color &p_default_bg_color, bool p_pancake_shadows, float p_shadow_bias = 0.0);

@@ -1534,6 +1534,283 @@ void RasterizerSceneGLES2::_update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_inde
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
+// GLES2 simplification: 3D state as plain uniforms (no UBOs). Location tables
+// below mirror the SceneData/MultiviewData/TonemapData GLSL members; values come
+// from the staged scene_state structs, byte-identical to the old UBO uploads.
+void RasterizerSceneGLES2::_ensure_scene_program_uniforms(GLuint p_program, ProgramUniforms &r_cache) {
+	r_cache.projection_matrix = glGetUniformLocation(p_program, "scene_data_block.data.projection_matrix");
+	r_cache.inv_projection_matrix = glGetUniformLocation(p_program, "scene_data_block.data.inv_projection_matrix");
+	r_cache.inv_view_matrix = glGetUniformLocation(p_program, "scene_data_block.data.inv_view_matrix");
+	r_cache.view_matrix = glGetUniformLocation(p_program, "scene_data_block.data.view_matrix");
+	r_cache.main_cam_inv_view_matrix = glGetUniformLocation(p_program, "scene_data_block.data.main_cam_inv_view_matrix");
+	r_cache.viewport_size = glGetUniformLocation(p_program, "scene_data_block.data.viewport_size");
+	r_cache.screen_pixel_size = glGetUniformLocation(p_program, "scene_data_block.data.screen_pixel_size");
+	r_cache.ambient_light_color_energy = glGetUniformLocation(p_program, "scene_data_block.data.ambient_light_color_energy");
+	r_cache.ambient_color_sky_mix = glGetUniformLocation(p_program, "scene_data_block.data.ambient_color_sky_mix");
+	r_cache.directional_shadow_count = glGetUniformLocation(p_program, "scene_data_block.data.directional_shadow_count");
+	r_cache.emissive_exposure_normalization = glGetUniformLocation(p_program, "scene_data_block.data.emissive_exposure_normalization");
+	r_cache.use_ambient_light = glGetUniformLocation(p_program, "scene_data_block.data.use_ambient_light");
+	r_cache.use_ambient_cubemap = glGetUniformLocation(p_program, "scene_data_block.data.use_ambient_cubemap");
+	r_cache.use_reflection_cubemap = glGetUniformLocation(p_program, "scene_data_block.data.use_reflection_cubemap");
+	r_cache.fog_aerial_perspective = glGetUniformLocation(p_program, "scene_data_block.data.fog_aerial_perspective");
+	r_cache.time = glGetUniformLocation(p_program, "scene_data_block.data.time");
+	r_cache.radiance_inverse_xform = glGetUniformLocation(p_program, "scene_data_block.data.radiance_inverse_xform");
+	r_cache.directional_light_count = glGetUniformLocation(p_program, "scene_data_block.data.directional_light_count");
+	r_cache.z_far = glGetUniformLocation(p_program, "scene_data_block.data.z_far");
+	r_cache.z_near = glGetUniformLocation(p_program, "scene_data_block.data.z_near");
+	r_cache.ibl_exposure_normalization = glGetUniformLocation(p_program, "scene_data_block.data.IBL_exposure_normalization");
+	r_cache.fog_enabled = glGetUniformLocation(p_program, "scene_data_block.data.fog_enabled");
+	r_cache.fog_mode = glGetUniformLocation(p_program, "scene_data_block.data.fog_mode");
+	r_cache.fog_density = glGetUniformLocation(p_program, "scene_data_block.data.fog_density");
+	r_cache.fog_height = glGetUniformLocation(p_program, "scene_data_block.data.fog_height");
+	r_cache.fog_height_density = glGetUniformLocation(p_program, "scene_data_block.data.fog_height_density");
+	r_cache.fog_depth_curve = glGetUniformLocation(p_program, "scene_data_block.data.fog_depth_curve");
+	r_cache.fog_sun_scatter = glGetUniformLocation(p_program, "scene_data_block.data.fog_sun_scatter");
+	r_cache.fog_depth_begin = glGetUniformLocation(p_program, "scene_data_block.data.fog_depth_begin");
+	r_cache.fog_light_color = glGetUniformLocation(p_program, "scene_data_block.data.fog_light_color");
+	r_cache.fog_depth_end = glGetUniformLocation(p_program, "scene_data_block.data.fog_depth_end");
+	r_cache.shadow_bias = glGetUniformLocation(p_program, "scene_data_block.data.shadow_bias");
+	r_cache.luminance_multiplier = glGetUniformLocation(p_program, "scene_data_block.data.luminance_multiplier");
+	r_cache.camera_visible_layers = glGetUniformLocation(p_program, "scene_data_block.data.camera_visible_layers");
+	r_cache.pancake_shadows = glGetUniformLocation(p_program, "scene_data_block.data.pancake_shadows");
+	r_cache.prev_projection_matrix = glGetUniformLocation(p_program, "prev_scene_data_block.data.projection_matrix");
+	r_cache.prev_inv_projection_matrix = glGetUniformLocation(p_program, "prev_scene_data_block.data.inv_projection_matrix");
+	r_cache.prev_inv_view_matrix = glGetUniformLocation(p_program, "prev_scene_data_block.data.inv_view_matrix");
+	r_cache.prev_view_matrix = glGetUniformLocation(p_program, "prev_scene_data_block.data.view_matrix");
+	r_cache.prev_main_cam_inv_view_matrix = glGetUniformLocation(p_program, "prev_scene_data_block.data.main_cam_inv_view_matrix");
+	r_cache.prev_viewport_size = glGetUniformLocation(p_program, "prev_scene_data_block.data.viewport_size");
+	r_cache.prev_screen_pixel_size = glGetUniformLocation(p_program, "prev_scene_data_block.data.screen_pixel_size");
+	r_cache.prev_ambient_light_color_energy = glGetUniformLocation(p_program, "prev_scene_data_block.data.ambient_light_color_energy");
+	r_cache.prev_ambient_color_sky_mix = glGetUniformLocation(p_program, "prev_scene_data_block.data.ambient_color_sky_mix");
+	r_cache.prev_directional_shadow_count = glGetUniformLocation(p_program, "prev_scene_data_block.data.directional_shadow_count");
+	r_cache.prev_emissive_exposure_normalization = glGetUniformLocation(p_program, "prev_scene_data_block.data.emissive_exposure_normalization");
+	r_cache.prev_use_ambient_light = glGetUniformLocation(p_program, "prev_scene_data_block.data.use_ambient_light");
+	r_cache.prev_use_ambient_cubemap = glGetUniformLocation(p_program, "prev_scene_data_block.data.use_ambient_cubemap");
+	r_cache.prev_use_reflection_cubemap = glGetUniformLocation(p_program, "prev_scene_data_block.data.use_reflection_cubemap");
+	r_cache.prev_fog_aerial_perspective = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_aerial_perspective");
+	r_cache.prev_time = glGetUniformLocation(p_program, "prev_scene_data_block.data.time");
+	r_cache.prev_radiance_inverse_xform = glGetUniformLocation(p_program, "prev_scene_data_block.data.radiance_inverse_xform");
+	r_cache.prev_directional_light_count = glGetUniformLocation(p_program, "prev_scene_data_block.data.directional_light_count");
+	r_cache.prev_z_far = glGetUniformLocation(p_program, "prev_scene_data_block.data.z_far");
+	r_cache.prev_z_near = glGetUniformLocation(p_program, "prev_scene_data_block.data.z_near");
+	r_cache.prev_ibl_exposure_normalization = glGetUniformLocation(p_program, "prev_scene_data_block.data.IBL_exposure_normalization");
+	r_cache.prev_fog_enabled = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_enabled");
+	r_cache.prev_fog_mode = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_mode");
+	r_cache.prev_fog_density = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_density");
+	r_cache.prev_fog_height = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_height");
+	r_cache.prev_fog_height_density = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_height_density");
+	r_cache.prev_fog_depth_curve = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_depth_curve");
+	r_cache.prev_fog_sun_scatter = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_sun_scatter");
+	r_cache.prev_fog_depth_begin = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_depth_begin");
+	r_cache.prev_fog_light_color = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_light_color");
+	r_cache.prev_fog_depth_end = glGetUniformLocation(p_program, "prev_scene_data_block.data.fog_depth_end");
+	r_cache.prev_shadow_bias = glGetUniformLocation(p_program, "prev_scene_data_block.data.shadow_bias");
+	r_cache.prev_luminance_multiplier = glGetUniformLocation(p_program, "prev_scene_data_block.data.luminance_multiplier");
+	r_cache.prev_camera_visible_layers = glGetUniformLocation(p_program, "prev_scene_data_block.data.camera_visible_layers");
+	r_cache.prev_pancake_shadows = glGetUniformLocation(p_program, "prev_scene_data_block.data.pancake_shadows");
+	r_cache.mv_projection_matrix_view = glGetUniformLocation(p_program, "multiview_data_block.data.projection_matrix_view[0]");
+	r_cache.mv_inv_projection_matrix_view = glGetUniformLocation(p_program, "multiview_data_block.data.inv_projection_matrix_view[0]");
+	r_cache.mv_eye_offset = glGetUniformLocation(p_program, "multiview_data_block.data.eye_offset[0]");
+	r_cache.prev_mv_projection_matrix_view = glGetUniformLocation(p_program, "prev_multiview_data_block.data.projection_matrix_view[0]");
+	r_cache.prev_mv_inv_projection_matrix_view = glGetUniformLocation(p_program, "prev_multiview_data_block.data.inv_projection_matrix_view[0]");
+	r_cache.prev_mv_eye_offset = glGetUniformLocation(p_program, "prev_multiview_data_block.data.eye_offset[0]");
+	r_cache.tonemap_exposure = glGetUniformLocation(p_program, "exposure");
+	r_cache.tonemap_tonemapper = glGetUniformLocation(p_program, "tonemapper");
+	r_cache.tonemap_tonemapper_params = glGetUniformLocation(p_program, "tonemapper_params");
+	r_cache.tonemap_brightness = glGetUniformLocation(p_program, "brightness");
+	r_cache.tonemap_contrast = glGetUniformLocation(p_program, "contrast");
+	r_cache.tonemap_saturation = glGetUniformLocation(p_program, "saturation");
+	r_cache.global_table = glGetUniformLocation(p_program, "global_shader_uniforms[0]");
+	r_cache.sky_dir_energy = glGetUniformLocation(p_program, "directional_lights[0].direction_energy");
+	r_cache.sky_dir_color = glGetUniformLocation(p_program, "directional_lights[0].color_size");
+	r_cache.sky_dir_enabled = glGetUniformLocation(p_program, "directional_lights[0].enabled_bake_mode");
+	r_cache.sky_dir_shadow_opacity = glGetUniformLocation(p_program, "directional_lights[0].shadow_opacity");
+	r_cache.sky_dir_specular = glGetUniformLocation(p_program, "directional_lights[0].specular");
+	r_cache.sky_dir_mask = glGetUniformLocation(p_program, "directional_lights[0].mask");
+	r_cache.sky_mv_projection_matrix_view = glGetUniformLocation(p_program, "multiview_data.projection_matrix_view[0]");
+	r_cache.sky_mv_inv_projection_matrix_view = glGetUniformLocation(p_program, "multiview_data.inv_projection_matrix_view[0]");
+	r_cache.sky_mv_eye_offset = glGetUniformLocation(p_program, "multiview_data.eye_offset[0]");
+}
+
+void RasterizerSceneGLES2::_set_scene_state_uniforms(RID p_version, SceneShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
+	GLuint program = material_storage->shaders.scene_shader.version_get_program(p_version, p_variant, p_specialization);
+	if (program == 0) {
+		return;
+	}
+	uint64_t frame = RSG::rasterizer->get_frame_number();
+	ProgramUniforms &cache = scene_state.program_uniforms[program];
+	// Refresh locations once per program (covers re-links); values every frame.
+	bool query = (cache.frame == 0);
+	// Note: frame 0 never occurs at runtime; first use always queries.
+	if (query) {
+		_ensure_scene_program_uniforms(program, cache);
+	}
+	cache.frame = frame;
+
+	const SceneState::UBO &d = scene_state.data;
+	glUniformMatrix4fv(cache.projection_matrix, 1, GL_FALSE, d.projection_matrix);
+	glUniformMatrix4fv(cache.inv_projection_matrix, 1, GL_FALSE, d.inv_projection_matrix);
+	glUniformMatrix4fv(cache.inv_view_matrix, 1, GL_FALSE, d.inv_view_matrix);
+	glUniformMatrix4fv(cache.view_matrix, 1, GL_FALSE, d.view_matrix);
+	glUniformMatrix4fv(cache.main_cam_inv_view_matrix, 1, GL_FALSE, d.main_cam_inv_view_matrix);
+	glUniform2fv(cache.viewport_size, 1, d.viewport_size);
+	glUniform2fv(cache.screen_pixel_size, 1, d.screen_pixel_size);
+	glUniform4fv(cache.ambient_light_color_energy, 1, d.ambient_light_color_energy);
+	glUniform1f(cache.ambient_color_sky_mix, d.ambient_color_sky_mix);
+	glUniform1ui(cache.directional_shadow_count, d.directional_shadow_count);
+	glUniform1f(cache.emissive_exposure_normalization, d.emissive_exposure_normalization);
+	glUniform1i(cache.use_ambient_light, d.use_ambient_light);
+	glUniform1i(cache.use_ambient_cubemap, d.use_ambient_cubemap);
+	glUniform1i(cache.use_reflection_cubemap, d.use_reflection_cubemap);
+	glUniform1f(cache.fog_aerial_perspective, d.fog_aerial_perspective);
+	glUniform1f(cache.time, d.time);
+	glUniformMatrix3x4fv(cache.radiance_inverse_xform, 1, GL_FALSE, d.radiance_inverse_xform);
+	glUniform1ui(cache.directional_light_count, d.directional_light_count);
+	glUniform1f(cache.z_far, d.z_far);
+	glUniform1f(cache.z_near, d.z_near);
+	glUniform1f(cache.ibl_exposure_normalization, d.IBL_exposure_normalization);
+	glUniform1i(cache.fog_enabled, d.fog_enabled);
+	glUniform1ui(cache.fog_mode, d.fog_mode);
+	glUniform1f(cache.fog_density, d.fog_density);
+	glUniform1f(cache.fog_height, d.fog_height);
+	glUniform1f(cache.fog_height_density, d.fog_height_density);
+	glUniform1f(cache.fog_depth_curve, d.fog_depth_curve);
+	glUniform1f(cache.fog_sun_scatter, d.fog_sun_scatter);
+	glUniform1f(cache.fog_depth_begin, d.fog_depth_begin);
+	glUniform3fv(cache.fog_light_color, 1, d.fog_light_color);
+	glUniform1f(cache.fog_depth_end, d.fog_depth_end);
+	glUniform1f(cache.shadow_bias, d.shadow_bias);
+	glUniform1f(cache.luminance_multiplier, d.luminance_multiplier);
+	glUniform1ui(cache.camera_visible_layers, d.camera_visible_layers);
+	glUniform1i(cache.pancake_shadows, d.pancake_shadows);
+
+	const SceneState::UBO &pd = (scene_state.prev_data_state == 1) ? scene_state.data : scene_state.prev_data;
+	glUniformMatrix4fv(cache.prev_projection_matrix, 1, GL_FALSE, pd.projection_matrix);
+	glUniformMatrix4fv(cache.prev_inv_projection_matrix, 1, GL_FALSE, pd.inv_projection_matrix);
+	glUniformMatrix4fv(cache.prev_inv_view_matrix, 1, GL_FALSE, pd.inv_view_matrix);
+	glUniformMatrix4fv(cache.prev_view_matrix, 1, GL_FALSE, pd.view_matrix);
+	glUniformMatrix4fv(cache.prev_main_cam_inv_view_matrix, 1, GL_FALSE, pd.main_cam_inv_view_matrix);
+	glUniform2fv(cache.prev_viewport_size, 1, pd.viewport_size);
+	glUniform2fv(cache.prev_screen_pixel_size, 1, pd.screen_pixel_size);
+	glUniform4fv(cache.prev_ambient_light_color_energy, 1, pd.ambient_light_color_energy);
+	glUniform1f(cache.prev_ambient_color_sky_mix, pd.ambient_color_sky_mix);
+	glUniform1ui(cache.prev_directional_shadow_count, pd.directional_shadow_count);
+	glUniform1f(cache.prev_emissive_exposure_normalization, pd.emissive_exposure_normalization);
+	glUniform1i(cache.prev_use_ambient_light, pd.use_ambient_light);
+	glUniform1i(cache.prev_use_ambient_cubemap, pd.use_ambient_cubemap);
+	glUniform1i(cache.prev_use_reflection_cubemap, pd.use_reflection_cubemap);
+	glUniform1f(cache.prev_fog_aerial_perspective, pd.fog_aerial_perspective);
+	glUniform1f(cache.prev_time, pd.time);
+	glUniformMatrix3x4fv(cache.prev_radiance_inverse_xform, 1, GL_FALSE, pd.radiance_inverse_xform);
+	glUniform1ui(cache.prev_directional_light_count, pd.directional_light_count);
+	glUniform1f(cache.prev_z_far, pd.z_far);
+	glUniform1f(cache.prev_z_near, pd.z_near);
+	glUniform1f(cache.prev_ibl_exposure_normalization, pd.IBL_exposure_normalization);
+	glUniform1i(cache.prev_fog_enabled, pd.fog_enabled);
+	glUniform1ui(cache.prev_fog_mode, pd.fog_mode);
+	glUniform1f(cache.prev_fog_density, pd.fog_density);
+	glUniform1f(cache.prev_fog_height, pd.fog_height);
+	glUniform1f(cache.prev_fog_height_density, pd.fog_height_density);
+	glUniform1f(cache.prev_fog_depth_curve, pd.fog_depth_curve);
+	glUniform1f(cache.prev_fog_sun_scatter, pd.fog_sun_scatter);
+	glUniform1f(cache.prev_fog_depth_begin, pd.fog_depth_begin);
+	glUniform3fv(cache.prev_fog_light_color, 1, pd.fog_light_color);
+	glUniform1f(cache.prev_fog_depth_end, pd.fog_depth_end);
+	glUniform1f(cache.prev_shadow_bias, pd.shadow_bias);
+	glUniform1f(cache.prev_luminance_multiplier, pd.luminance_multiplier);
+	glUniform1ui(cache.prev_camera_visible_layers, pd.camera_visible_layers);
+	glUniform1i(cache.prev_pancake_shadows, pd.pancake_shadows);
+
+	glUniformMatrix4fv(cache.mv_projection_matrix_view, RendererSceneRender::MAX_RENDER_VIEWS, GL_FALSE, &scene_state.multiview_data.projection_matrix_view[0][0]);
+	glUniformMatrix4fv(cache.mv_inv_projection_matrix_view, RendererSceneRender::MAX_RENDER_VIEWS, GL_FALSE, &scene_state.multiview_data.inv_projection_matrix_view[0][0]);
+	glUniform4fv(cache.mv_eye_offset, RendererSceneRender::MAX_RENDER_VIEWS, &scene_state.multiview_data.eye_offset[0][0]);
+	const SceneState::MultiviewUBO &pmd = (scene_state.prev_data_state == 1) ? scene_state.multiview_data : scene_state.prev_multiview_data;
+	glUniformMatrix4fv(cache.prev_mv_projection_matrix_view, RendererSceneRender::MAX_RENDER_VIEWS, GL_FALSE, &pmd.projection_matrix_view[0][0]);
+	glUniformMatrix4fv(cache.prev_mv_inv_projection_matrix_view, RendererSceneRender::MAX_RENDER_VIEWS, GL_FALSE, &pmd.inv_projection_matrix_view[0][0]);
+	glUniform4fv(cache.prev_mv_eye_offset, RendererSceneRender::MAX_RENDER_VIEWS, &pmd.eye_offset[0][0]);
+
+	const SceneState::TonemapUBO &tm = scene_state.tonemap_data;
+	glUniform1f(cache.tonemap_exposure, tm.exposure);
+	glUniform1i(cache.tonemap_tonemapper, tm.tonemapper);
+	glUniform4fv(cache.tonemap_tonemapper_params, 1, tm.tonemapper_params);
+	glUniform1f(cache.tonemap_brightness, tm.brightness);
+	glUniform1f(cache.tonemap_contrast, tm.contrast);
+	glUniform1f(cache.tonemap_saturation, tm.saturation);
+
+	material_storage->global_shader_parameters_upload_as_uniforms(cache.global_table);
+}
+
+void RasterizerSceneGLES2::_set_sky_uniforms(RID p_version, SkyShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
+	GLuint program = material_storage->shaders.sky_shader.version_get_program(p_version, p_variant, p_specialization);
+	if (program == 0) {
+		return;
+	}
+	uint64_t frame = RSG::rasterizer->get_frame_number();
+	ProgramUniforms &cache = scene_state.program_uniforms[program];
+	if (cache.frame == 0) {
+		_ensure_scene_program_uniforms(program, cache);
+	}
+	cache.frame = frame;
+
+	const uint32_t count = MIN(sky_globals.max_directional_lights, 4u);
+	float direction_energy[4 * 4];
+	float color_size[4 * 4];
+	uint32_t enabled_bake_mode[4];
+	float shadow_opacity[4];
+	float specular[4];
+	uint32_t mask[4];
+	for (uint32_t i = 0; i < count && i < 4; i++) {
+		const DirectionalLightData &dl = sky_globals.directional_lights[i];
+		direction_energy[i * 4] = dl.direction[0];
+		direction_energy[i * 4 + 1] = dl.direction[1];
+		direction_energy[i * 4 + 2] = dl.direction[2];
+		direction_energy[i * 4 + 3] = dl.energy;
+		color_size[i * 4] = dl.color[0];
+		color_size[i * 4 + 1] = dl.color[1];
+		color_size[i * 4 + 2] = dl.color[2];
+		color_size[i * 4 + 3] = dl.size;
+		enabled_bake_mode[i] = (dl.enabled ? 1u : 0u) | (dl.bake_mode << 1);
+		shadow_opacity[i] = dl.shadow_opacity;
+		specular[i] = dl.specular;
+		mask[i] = dl.mask;
+	}
+	glUniform4fv(cache.sky_dir_energy, count, direction_energy);
+	glUniform4fv(cache.sky_dir_color, count, color_size);
+	glUniform1uiv(cache.sky_dir_enabled, count, enabled_bake_mode);
+	glUniform1fv(cache.sky_dir_shadow_opacity, count, shadow_opacity);
+	glUniform1fv(cache.sky_dir_specular, count, specular);
+	glUniform1uiv(cache.sky_dir_mask, count, mask);
+
+	glUniformMatrix4fv(cache.sky_mv_projection_matrix_view, RendererSceneRender::MAX_RENDER_VIEWS, GL_FALSE, &scene_state.multiview_data.projection_matrix_view[0][0]);
+	glUniformMatrix4fv(cache.sky_mv_inv_projection_matrix_view, RendererSceneRender::MAX_RENDER_VIEWS, GL_FALSE, &scene_state.multiview_data.inv_projection_matrix_view[0][0]);
+	glUniform4fv(cache.sky_mv_eye_offset, RendererSceneRender::MAX_RENDER_VIEWS, &scene_state.multiview_data.eye_offset[0][0]);
+
+	const SceneState::TonemapUBO &tm = scene_state.tonemap_data;
+	glUniform1f(cache.tonemap_exposure, tm.exposure);
+	glUniform1i(cache.tonemap_tonemapper, tm.tonemapper);
+	glUniform4fv(cache.tonemap_tonemapper_params, 1, tm.tonemapper_params);
+	glUniform1f(cache.tonemap_brightness, tm.brightness);
+	glUniform1f(cache.tonemap_contrast, tm.contrast);
+	glUniform1f(cache.tonemap_saturation, tm.saturation);
+
+	material_storage->global_shader_parameters_upload_as_uniforms(cache.global_table);
+}
+
+void RasterizerSceneGLES2::_update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_index, uint32_t p_size, const void *p_source_data, String p_name) {
+	if (p_ubo_buffer == 0) {
+		glGenBuffers(1, &p_ubo_buffer);
+		glBindBufferBase(GL_UNIFORM_BUFFER, p_index, p_ubo_buffer);
+		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, p_ubo_buffer, p_size, p_source_data, GL_STREAM_DRAW, p_name);
+	} else {
+		glBindBufferBase(GL_UNIFORM_BUFFER, p_index, p_ubo_buffer);
+		glBufferData(GL_UNIFORM_BUFFER, p_size, p_source_data, GL_STREAM_DRAW);
+	}
+
+	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+}
+
 // Needs to be called after _setup_lights so that directional_light_count is accurate.
 void RasterizerSceneGLES2::_setup_environment(const RenderDataGLES2 *p_render_data, bool p_no_fog, const Size2i &p_screen_size, bool p_flip_y, const Color &p_default_bg_color, bool p_pancake_shadows, float p_shadow_bias) {
 	Projection correction;

@@ -52,9 +52,11 @@ uniform sampler2D half_res; //texunit:-2
 uniform sampler2D quarter_res; //texunit:-3
 #endif
 
-layout(std140) uniform GlobalShaderUniformData { //ubo:1
-	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
-};
+// GLES2 simplification (low-end 3D): global table as plain array (no UBO),
+// declared only when user code references it so default programs stay small.
+#ifdef SKY_GLOBALS_USED
+uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
+#endif
 
 struct DirectionalLightData {
 	vec4 direction_energy;
@@ -65,10 +67,12 @@ struct DirectionalLightData {
 	uint mask;
 };
 
-layout(std140) uniform DirectionalLights { //ubo:4
+// GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
+// (same member access, no block).
+struct DirectionalLights {
 	DirectionalLightData data[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
-}
-directional_lights;
+};
+uniform DirectionalLights directional_lights;
 
 #define DIRECTIONAL_LIGHT_ENABLED uint(1 << 0)
 
@@ -119,12 +123,14 @@ layout(std140) uniform MaterialUniforms{ //ubo:3
 #endif
 
 #ifdef USE_MULTIVIEW
-layout(std140) uniform MultiviewData { // ubo:12
+// GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
+// (same member access, no block).
+struct MultiviewDataSky {
 	highp mat4 projection_matrix_view[MAX_VIEWS];
 	highp mat4 inv_projection_matrix_view[MAX_VIEWS];
 	highp vec4 eye_offset[MAX_VIEWS];
-}
-multiview_data;
+};
+uniform MultiviewDataSky multiview_data;
 #endif
 
 layout(location = 0) out vec4 frag_color;

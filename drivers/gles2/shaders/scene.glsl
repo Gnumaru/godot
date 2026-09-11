@@ -177,9 +177,11 @@ layout(location = 21) in highp uvec4 prev_instance_color_custom_data;
 
 #define FLAGS_NON_UNIFORM_SCALE (1 << 4)
 
-layout(std140) uniform GlobalShaderUniformData { //ubo:1
-	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
-};
+// GLES2 simplification (low-end 3D): global table as plain array (no UBO),
+// declared only when user code references it so default programs stay small.
+#ifdef SCENE_GLOBALS_USED
+uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
+#endif
 
 struct SceneData {
 	highp mat4 projection_matrix;
@@ -231,17 +233,18 @@ struct SceneData {
 	bool pancake_shadows;
 };
 
-// The containing data block is for historic reasons.
-layout(std140) uniform SceneDataBlock { // ubo:2
+// GLES2 simplification (low-end 3D): UBOs converted to plain struct uniforms
+// (same member access, no block).
+struct SceneDataBlock {
 	SceneData data;
-}
-scene_data_block;
+};
+uniform SceneDataBlock scene_data_block;
 
 #ifdef RENDER_MOTION_VECTORS
-layout(std140) uniform PrevSceneDataBlock { // ubo:13
+struct PrevSceneDataBlock {
 	SceneData data;
-}
-prev_scene_data_block;
+};
+uniform PrevSceneDataBlock prev_scene_data_block;
 #endif
 
 #ifndef RENDER_MOTION_VECTORS
@@ -482,16 +485,18 @@ struct MultiviewData {
 	highp vec4 eye_offset[MAX_VIEWS];
 };
 
-layout(std140) uniform MultiviewDataBlock { // ubo:9
+// GLES2 simplification (low-end 3D): UBOs converted to plain struct uniforms
+// (same member access, no block).
+struct MultiviewDataBlock {
 	MultiviewData data;
-}
-multiview_data_block;
+};
+uniform MultiviewDataBlock multiview_data_block;
 
 #ifdef RENDER_MOTION_VECTORS
-layout(std140) uniform PrevMultiviewDataBlock { // ubo:14
+struct PrevMultiviewDataBlock {
 	MultiviewData data;
-}
-prev_multiview_data_block;
+};
+uniform PrevMultiviewDataBlock prev_multiview_data_block;
 #endif // RENDER_MOTION_VECTORS
 
 #endif // USE_MULTIVIEW
@@ -1149,9 +1154,11 @@ uniform samplerCube refprobe2_texture; // texunit:-9
 
 #endif // DISABLE_REFLECTION_PROBE
 
-layout(std140) uniform GlobalShaderUniformData { //ubo:1
-	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
-};
+// GLES2 simplification (low-end 3D): global table as plain array (no UBO),
+// declared only when user code references it so default programs stay small.
+#ifdef SCENE_GLOBALS_USED
+uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
+#endif
 
 /* Material Uniforms */
 #ifdef MATERIAL_UNIFORMS_USED
@@ -1216,10 +1223,12 @@ struct SceneData {
 	bool pancake_shadows;
 };
 
-layout(std140) uniform SceneDataBlock { // ubo:2
+// GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
+// (same member access, no block).
+struct SceneDataBlockFrag {
 	SceneData data;
-}
-scene_data_block;
+};
+uniform SceneDataBlockFrag scene_data_block;
 
 #ifdef USE_MULTIVIEW
 struct MultiviewData {
@@ -1228,10 +1237,12 @@ struct MultiviewData {
 	highp vec4 eye_offset[MAX_VIEWS];
 };
 
-layout(std140) uniform MultiviewDataBlock { // ubo:9
+// GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
+// (same member access, no block).
+struct MultiviewDataBlockFrag {
 	MultiviewData data;
-}
-multiview_data_block;
+};
+uniform MultiviewDataBlockFrag multiview_data_block;
 #endif
 
 uniform highp mat4 world_transform;

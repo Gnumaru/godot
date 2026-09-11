@@ -3278,7 +3278,23 @@ void SkyShaderData::set_code(const String &p_code) {
 
 	LocalVector<ShaderGLES2::TextureUniformData> texture_uniform_data = get_texture_uniform_data_GLES2(gen_code.texture_uniforms);
 
-	MaterialStorage::get_singleton()->shaders.sky_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
+	Vector<String> sky_defines = gen_code.defines;
+	{
+		// GLES2 simplification: declare the plain global table only when user
+		// code references it, so default programs stay small.
+		bool uses_global_table = false;
+		for (const KeyValue<String, String> &E : gen_code.code) {
+			if (E.value.contains("global_shader_uniforms[")) {
+				uses_global_table = true;
+				break;
+			}
+		}
+		if (uses_global_table) {
+			sky_defines.push_back("#define SKY_GLOBALS_USED\n");
+		}
+	}
+
+	MaterialStorage::get_singleton()->shaders.sky_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], sky_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.sky_shader.version_is_valid(version));
 
 	ubo_size = gen_code.uniform_total_size;
@@ -3576,7 +3592,23 @@ void SceneShaderData::set_code(const String &p_code) {
 
 	LocalVector<ShaderGLES2::TextureUniformData> texture_uniform_data = get_texture_uniform_data_GLES2(gen_code.texture_uniforms);
 
-	MaterialStorage::get_singleton()->shaders.scene_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
+	Vector<String> scene_defines = gen_code.defines;
+	{
+		// GLES2 simplification: declare the plain global table only when user
+		// code references it, so default programs stay small.
+		bool uses_global_table = false;
+		for (const KeyValue<String, String> &E : gen_code.code) {
+			if (E.value.contains("global_shader_uniforms[")) {
+				uses_global_table = true;
+				break;
+			}
+		}
+		if (uses_global_table) {
+			scene_defines.push_back("#define SCENE_GLOBALS_USED\n");
+		}
+	}
+
+	MaterialStorage::get_singleton()->shaders.scene_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], scene_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.scene_shader.version_is_valid(version));
 
 	ubo_size = gen_code.uniform_total_size;

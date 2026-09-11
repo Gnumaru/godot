@@ -1,14 +1,11 @@
-layout(std140) uniform TonemapData { //ubo:0
-	float exposure;
-	int tonemapper;
-	int pad;
-	int pad2;
-	vec4 tonemapper_params;
-	float brightness;
-	float contrast;
-	float saturation;
-	int pad3;
-};
+// GLES2 simplification (low-end 3D): UBO converted to plain uniforms
+// (members were injected bare into global scope; same access, no block).
+uniform float exposure;
+uniform int tonemapper;
+uniform vec4 tonemapper_params;
+uniform float brightness;
+uniform float contrast;
+uniform float saturation;
 
 // This approximation expects non-negative input; negative input is undefined behavior.
 vec3 linear_to_srgb(vec3 color) {
