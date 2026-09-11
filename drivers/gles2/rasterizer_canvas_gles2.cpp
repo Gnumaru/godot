@@ -733,6 +733,11 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::DIRECTIONAL_LIGHT_COUNT, state.directional_light_count_state, shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::TEX_TO_SDF, state.tex_to_sdf_state, shader_version, variant, specialization);
 
+		// GLES2 simplification: uniforms de material como variaveis comuns (sem UBO).
+		if (material_data) {
+			material_data->bind_material_uniforms(material_storage->shaders.canvas_shader, shader_version, variant, specialization);
+		}
+
 		GLES2::CanvasShaderData::BlendMode blend_mode = state.canvas_instance_batches[i].blend_mode;
 		Color blend_color = state.canvas_instance_batches[i].blend_color;
 

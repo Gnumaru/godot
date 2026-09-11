@@ -2722,7 +2722,27 @@ void CanvasShaderData::set_code(const String &p_code) {
 
 	LocalVector<ShaderGLES2::TextureUniformData> texture_uniform_data = get_texture_uniform_data_GLES2(gen_code.texture_uniforms);
 
-	MaterialStorage::get_singleton()->shaders.canvas_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
+	// GLES2 simplification: uniforms de material como variaveis comuns (sem UBO).
+	// As declaracoes geradas sao membros ("vec4 x;"); prefixa com "uniform ".
+	// Globais continuam como indices uint na tabela global (uso no codigo gerado
+	// e "global_shader_uniforms[indice]"), resolvidos por bind a cada draw.
+	String material_uniforms_code;
+	{
+		Vector<String> uniform_lines = gen_code.uniforms.split("\n");
+		for (int i = 0; i < uniform_lines.size(); i++) {
+			String line = uniform_lines[i].strip_edges();
+			if (line.is_empty()) {
+				continue;
+			}
+			if (!line.begins_with("uniform ") && !line.begins_with("layout ")) {
+				material_uniforms_code += "uniform " + line + "\n";
+			} else {
+				material_uniforms_code += line + "\n";
+			}
+		}
+	}
+
+	MaterialStorage::get_singleton()->shaders.canvas_shader.version_set_code(version, gen_code.code, material_uniforms_code, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.canvas_shader.version_is_valid(version));
 
 	vertex_input_mask = RSE::ARRAY_FORMAT_VERTEX | RSE::ARRAY_FORMAT_COLOR | RSE::ARRAY_FORMAT_TEX_UV;
@@ -2766,7 +2786,35 @@ GLES2::ShaderData *GLES2::_create_canvas_shader_func() {
 }
 
 void CanvasMaterialData::update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty) {
-	update_parameters_internal(p_parameters, p_uniform_dirty, p_textures_dirty, shader_data->uniforms, shader_data->ubo_offsets.ptr(), shader_data->texture_uniforms, shader_data->default_texture_params, shader_data->ubo_size, false);
+	// GLES2 simplification: sem UBO de material (uniforms comuns); texturas seguem o caminho normal.
+	update_parameters_internal(p_parameters, p_uniform_dirty, p_textures_dirty, shader_data->uniforms, nullptr, shader_data->texture_uniforms, shader_data->default_texture_params, 0, false);
+
+	// Mescla parametros sobre defaults para upload como uniforms comuns por draw.
+	uniform_values.clear();
+	for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : shader_data->uniforms) {
+		if (E.value.is_texture()) {
+			continue;
+		}
+		if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_INSTANCE) {
+			continue;
+		}
+		HashMap<StringName, Variant>::ConstIterator V = p_parameters.find(E.key);
+		if (V) {
+			uniform_values[E.key] = V->value;
+		} else if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
+			// Resolvido por bind (indice atual da tabela global); nada a guardar.
+			continue;
+		} else if (E.value.default_value.size()) {
+			uniform_values[E.key] = ShaderLanguage::constant_value_to_variant(E.value.default_value, E.value.type, E.value.array_size, E.value.hint);
+		} else if ((E.value.type == ShaderLanguage::TYPE_VEC3 || E.value.type == ShaderLanguage::TYPE_VEC4) && E.value.hint == ShaderLanguage::ShaderNode::Uniform::HINT_COLOR_CONVERSION_DISABLED) {
+			// Paridade com update_uniform_buffer: cores lineares default como preto opaco.
+			uniform_values[E.key] = Color(0, 0, 0, 1);
+		} else {
+			uniform_values[E.key] = ShaderLanguage::get_default_datatype_value(E.value.type, E.value.array_size, E.value.hint);
+		}
+	}
+	uniform_locations_program = 0;
+	uniform_locations.clear();
 }
 
 static void bind_uniforms_generic(const Vector<RID> &p_textures, const Vector<ShaderCompiler::GeneratedCode::Texture> &p_texture_uniforms, int texture_offset = 0, const RSE::CanvasItemTextureFilter *filter_mapping = filter_from_uniform, const RSE::CanvasItemTextureRepeat *repeat_mapping = repeat_from_uniform) {
@@ -2801,10 +2849,316 @@ static void bind_uniforms_generic(const Vector<RID> &p_textures, const Vector<Sh
 }
 
 void CanvasMaterialData::bind_uniforms() {
-	// Bind Material Uniforms
-	glBindBufferBase(GL_UNIFORM_BUFFER, RasterizerCanvasGLES2::MATERIAL_UNIFORM_LOCATION, uniform_buffer);
+	// GLES2 simplification: sem UBO de material (uniforms comuns); o buffer so
+	// existe se ainda houver dados (legado). Texturas seguem o caminho normal.
+	if (uniform_buffer != 0) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, RasterizerCanvasGLES2::MATERIAL_UNIFORM_LOCATION, uniform_buffer);
+	}
 
 	bind_uniforms_generic(texture_cache, shader_data->texture_uniforms, 1, filter_from_uniform_canvas, repeat_from_uniform_canvas); // Start at GL_TEXTURE1 because texture slot 0 is used by the base texture
+}
+
+// GLES2 simplification: upload de uniforms de material como variaveis comuns
+// (sem UBO), por draw, no padrao do gles2 do Godot 3.
+static void _set_plain_uniform(GLint p_location, ShaderLanguage::DataType p_type, int p_array_size, const Variant &p_value) {
+	if (p_location < 0) {
+		return;
+	}
+	switch (p_type) {
+		case ShaderLanguage::TYPE_BOOL: {
+			if (p_array_size > 0) {
+				const PackedInt32Array &a = p_value;
+				if (a.size() < p_array_size) {
+					return;
+				}
+				glUniform1iv(p_location, p_array_size, a.ptr());
+			} else {
+				bool b = p_value;
+				glUniform1i(p_location, b ? 1 : 0);
+			}
+		} break;
+		case ShaderLanguage::TYPE_BVEC2:
+		case ShaderLanguage::TYPE_BVEC3:
+		case ShaderLanguage::TYPE_BVEC4: {
+			int components = (p_type == ShaderLanguage::TYPE_BVEC2) ? 2 : ((p_type == ShaderLanguage::TYPE_BVEC3) ? 3 : 4);
+			if (p_array_size > 0) {
+				const PackedInt32Array &a = p_value;
+				if (a.size() < p_array_size * components) {
+					return;
+				}
+				const GLint *v = (const GLint *)a.ptr();
+				if (components == 2) {
+					glUniform2iv(p_location, p_array_size, v);
+				} else if (components == 3) {
+					glUniform3iv(p_location, p_array_size, v);
+				} else {
+					glUniform4iv(p_location, p_array_size, v);
+				}
+			} else {
+				int flags = p_value;
+				if (components == 2) {
+					glUniform2i(p_location, (flags & 1) ? 1 : 0, (flags & 2) ? 1 : 0);
+				} else if (components == 3) {
+					glUniform3i(p_location, (flags & 1) ? 1 : 0, (flags & 2) ? 1 : 0, (flags & 4) ? 1 : 0);
+				} else {
+					glUniform4i(p_location, (flags & 1) ? 1 : 0, (flags & 2) ? 1 : 0, (flags & 4) ? 1 : 0, (flags & 8) ? 1 : 0);
+				}
+			}
+		} break;
+		case ShaderLanguage::TYPE_INT: {
+			if (p_array_size > 0) {
+				const PackedInt32Array &a = p_value;
+				if (a.size() < p_array_size) {
+					return;
+				}
+				glUniform1iv(p_location, p_array_size, a.ptr());
+			} else {
+				int64_t v = p_value;
+				glUniform1i(p_location, int(v));
+			}
+		} break;
+		case ShaderLanguage::TYPE_IVEC2:
+		case ShaderLanguage::TYPE_IVEC3:
+		case ShaderLanguage::TYPE_IVEC4: {
+			int components = (p_type == ShaderLanguage::TYPE_IVEC2) ? 2 : ((p_type == ShaderLanguage::TYPE_IVEC3) ? 3 : 4);
+			if (p_array_size > 0) {
+				const PackedInt32Array &a = p_value;
+				if (a.size() < p_array_size * components) {
+					return;
+				}
+				const GLint *v = (const GLint *)a.ptr();
+				if (components == 2) {
+					glUniform2iv(p_location, p_array_size, v);
+				} else if (components == 3) {
+					glUniform3iv(p_location, p_array_size, v);
+				} else {
+					glUniform4iv(p_location, p_array_size, v);
+				}
+			} else if (components == 2) {
+				Vector2i v = p_value;
+				glUniform2i(p_location, v.x, v.y);
+			} else if (components == 3) {
+				Vector3i v = p_value;
+				glUniform3i(p_location, v.x, v.y, v.z);
+			} else {
+				Vector4i v = p_value;
+				glUniform4i(p_location, v.x, v.y, v.z, v.w);
+			}
+		} break;
+		case ShaderLanguage::TYPE_UINT:
+		case ShaderLanguage::TYPE_UVEC2:
+		case ShaderLanguage::TYPE_UVEC3:
+		case ShaderLanguage::TYPE_UVEC4: {
+			int components = (p_type == ShaderLanguage::TYPE_UINT) ? 1 : ((p_type == ShaderLanguage::TYPE_UVEC2) ? 2 : ((p_type == ShaderLanguage::TYPE_UVEC3) ? 3 : 4));
+			if (p_array_size > 0) {
+				const PackedInt32Array &a = p_value;
+				if (a.size() < p_array_size * components) {
+					return;
+				}
+				glUniform1uiv(p_location, p_array_size * components, (const GLuint *)a.ptr());
+			} else if (components == 1) {
+				int64_t v = p_value;
+				glUniform1ui(p_location, uint32_t(v));
+			} else if (components == 2) {
+				Vector2i v = p_value;
+				glUniform2ui(p_location, uint32_t(v.x), uint32_t(v.y));
+			} else if (components == 3) {
+				Vector3i v = p_value;
+				glUniform3ui(p_location, uint32_t(v.x), uint32_t(v.y), uint32_t(v.z));
+			} else {
+				Vector4i v = p_value;
+				glUniform4ui(p_location, uint32_t(v.x), uint32_t(v.y), uint32_t(v.z), uint32_t(v.w));
+			}
+		} break;
+		case ShaderLanguage::TYPE_FLOAT: {
+			if (p_array_size > 0) {
+				const PackedFloat32Array &a = p_value;
+				if (a.size() < p_array_size) {
+					return;
+				}
+				glUniform1fv(p_location, p_array_size, a.ptr());
+			} else {
+				float v = p_value;
+				glUniform1f(p_location, v);
+			}
+		} break;
+		case ShaderLanguage::TYPE_VEC2: {
+			if (p_array_size > 0) {
+				const PackedVector2Array &a = p_value;
+				if (a.size() < p_array_size) {
+					return;
+				}
+				glUniform2fv(p_location, p_array_size, (const GLfloat *)a.ptr());
+			} else {
+				Vector2 v = p_value;
+				glUniform2f(p_location, v.x, v.y);
+			}
+		} break;
+		case ShaderLanguage::TYPE_VEC3: {
+			if (p_array_size > 0) {
+				if (p_value.get_type() == Variant::PACKED_COLOR_ARRAY) {
+					const PackedColorArray &a = p_value;
+					if (a.size() < p_array_size) {
+						return;
+					}
+					for (int i = 0; i < p_array_size; i++) {
+						glUniform3f(p_location + i, a[i].r, a[i].g, a[i].b);
+					}
+				} else {
+					const PackedVector3Array &a = p_value;
+					if (a.size() < p_array_size) {
+						return;
+					}
+					glUniform3fv(p_location, p_array_size, (const GLfloat *)a.ptr());
+				}
+			} else if (p_value.get_type() == Variant::COLOR) {
+				Color v = p_value;
+				glUniform3f(p_location, v.r, v.g, v.b);
+			} else {
+				Vector3 v = p_value;
+				glUniform3f(p_location, v.x, v.y, v.z);
+			}
+		} break;
+		case ShaderLanguage::TYPE_VEC4: {
+			if (p_array_size > 0) {
+				if (p_value.get_type() == Variant::PACKED_COLOR_ARRAY) {
+					const PackedColorArray &a = p_value;
+					if (a.size() < p_array_size) {
+						return;
+					}
+					for (int i = 0; i < p_array_size; i++) {
+						glUniform4f(p_location + i, a[i].r, a[i].g, a[i].b, a[i].a);
+					}
+				} else {
+					const PackedVector4Array &a = p_value;
+					if (a.size() < p_array_size) {
+						return;
+					}
+					glUniform4fv(p_location, p_array_size, (const GLfloat *)a.ptr());
+				}
+			} else if (p_value.get_type() == Variant::COLOR) {
+				Color v = p_value;
+				glUniform4f(p_location, v.r, v.g, v.b, v.a);
+			} else {
+				Vector4 v = p_value;
+				glUniform4f(p_location, v.x, v.y, v.z, v.w);
+			}
+		} break;
+		case ShaderLanguage::TYPE_MAT2: {
+			if (p_array_size > 0) {
+				const PackedFloat32Array &a = p_value;
+				if (a.size() < p_array_size * 4) {
+					return;
+				}
+				glUniformMatrix2fv(p_location, p_array_size, GL_FALSE, a.ptr());
+			} else {
+				Transform2D tr = p_value;
+				GLfloat matrix[4] = {
+					tr.columns[0][0], tr.columns[0][1],
+					tr.columns[1][0], tr.columns[1][1],
+				};
+				glUniformMatrix2fv(p_location, 1, GL_FALSE, matrix);
+			}
+		} break;
+		case ShaderLanguage::TYPE_MAT3: {
+			if (p_array_size > 0) {
+				const PackedFloat32Array &a = p_value;
+				if (a.size() < p_array_size * 9) {
+					return;
+				}
+				glUniformMatrix3fv(p_location, p_array_size, GL_FALSE, a.ptr());
+			} else {
+				Basis v = p_value;
+				GLfloat mat[9] = {
+					v.rows[0][0], v.rows[1][0], v.rows[2][0],
+					v.rows[0][1], v.rows[1][1], v.rows[2][1],
+					v.rows[0][2], v.rows[1][2], v.rows[2][2],
+				};
+				glUniformMatrix3fv(p_location, 1, GL_FALSE, mat);
+			}
+		} break;
+		case ShaderLanguage::TYPE_MAT4: {
+			if (p_array_size > 0) {
+				const PackedFloat32Array &a = p_value;
+				if (a.size() < p_array_size * 16) {
+					return;
+				}
+				glUniformMatrix4fv(p_location, p_array_size, GL_FALSE, a.ptr());
+			} else if (p_value.get_type() == Variant::TRANSFORM3D) {
+				Transform3D tr = p_value;
+				GLfloat matrix[16] = {
+					tr.basis.rows[0][0], tr.basis.rows[1][0], tr.basis.rows[2][0], 0,
+					tr.basis.rows[0][1], tr.basis.rows[1][1], tr.basis.rows[2][1], 0,
+					tr.basis.rows[0][2], tr.basis.rows[1][2], tr.basis.rows[2][2], 0,
+					tr.origin.x, tr.origin.y, tr.origin.z, 1
+				};
+				glUniformMatrix4fv(p_location, 1, GL_FALSE, matrix);
+			} else {
+				Projection v = p_value;
+				GLfloat matrix[16];
+				for (int i = 0; i < 4; i++) {
+					for (int j = 0; j < 4; j++) {
+						matrix[i * 4 + j] = v.columns[i][j];
+					}
+				}
+				glUniformMatrix4fv(p_location, 1, GL_FALSE, matrix);
+			}
+		} break;
+		default: {
+			WARN_PRINT_ONCE_ED("Compatibility (GLES2) renderer does not support this material uniform type as plain uniform.");
+		} break;
+	}
+}
+
+void CanvasMaterialData::bind_material_uniforms(CanvasShaderGLES2 &p_shader, RID p_version, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+		return;
+	}
+	GLuint program = p_shader.version_get_program(p_version, p_variant, p_specialization);
+	if (program == 0) {
+		return;
+	}
+	if (uniform_locations_program != program) {
+		uniform_locations.clear();
+		uniform_locations_program = program;
+	}
+	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+	for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : shader_data->uniforms) {
+		if (E.value.is_texture()) {
+			continue;
+		}
+		if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_INSTANCE) {
+			continue;
+		}
+		GLint location = -1;
+		HashMap<StringName, GLint>::Iterator L = uniform_locations.find(E.key);
+		if (L) {
+			location = L->value;
+		} else {
+			CharString cname = String(E.key).utf8();
+			location = glGetUniformLocation(program, cname.get_data());
+			uniform_locations[E.key] = location;
+		}
+		if (location < 0) {
+			continue;
+		}
+		if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
+			GlobalShaderUniforms::Variable *gv = material_storage->global_shader_uniforms.variables.getptr(E.key);
+			uint32_t index = 0;
+			if (gv) {
+				index = gv->buffer_index;
+			} else {
+				WARN_PRINT("Shader uses global parameter '" + E.key + "', but it was removed at some point. Material will not display correctly.");
+			}
+			glUniform1ui(location, index);
+			continue;
+		}
+		HashMap<StringName, Variant>::ConstIterator V = uniform_values.find(E.key);
+		if (!V) {
+			continue;
+		}
+		_set_plain_uniform(location, E.value.type, E.value.array_size, V->value);
+	}
 }
 
 CanvasMaterialData::~CanvasMaterialData() {

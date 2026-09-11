@@ -765,6 +765,21 @@ bool ShaderGLES2::shader_cache_cleanup_on_start = false;
 ShaderGLES2::ShaderGLES2() {
 }
 
+GLuint ShaderGLES2::version_get_program(RID p_version, int p_variant, uint64_t p_specialization) {
+	Version *version = version_owner.get_or_null(p_version);
+	if (version == nullptr || version->variants.is_empty()) {
+		return 0;
+	}
+	if (p_variant < 0 || p_variant >= int(version->variants.size())) {
+		return 0;
+	}
+	Version::Specialization *spec = version->variants[p_variant].getptr(p_specialization);
+	if (spec == nullptr) {
+		return 0;
+	}
+	return spec->id;
+}
+
 void ShaderGLES2::initialize(const String &p_general_defines, int p_base_texture_index) {
 	general_defines = p_general_defines.utf8();
 	base_texture_index = p_base_texture_index;

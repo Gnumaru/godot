@@ -185,10 +185,17 @@ ShaderData *_create_canvas_shader_func();
 struct CanvasMaterialData : public MaterialData {
 	CanvasShaderData *shader_data = nullptr;
 
+	// GLES2 simplification: valores mesclados (parametros sobre defaults) para
+	// upload como uniforms comuns; locations por programa compilado.
+	HashMap<StringName, Variant> uniform_values;
+	GLuint uniform_locations_program = 0;
+	HashMap<StringName, GLint> uniform_locations;
+
 	virtual void set_render_priority(int p_priority) {}
 	virtual void set_next_pass(RID p_pass) {}
 	virtual void update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty);
 	virtual void bind_uniforms();
+	void bind_material_uniforms(CanvasShaderGLES2 &p_shader, RID p_version, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
 	virtual ~CanvasMaterialData();
 };
 
@@ -534,6 +541,7 @@ struct GlobalShaderUniforms {
 class MaterialStorage : public RendererMaterialStorage {
 private:
 	friend struct MaterialData;
+	friend struct CanvasMaterialData; // GLES2 simplification: acesso aos indices de globais.
 	static MaterialStorage *singleton;
 
 	/* GLOBAL SHADER UNIFORM API */

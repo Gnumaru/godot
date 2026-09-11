@@ -103,12 +103,13 @@ flat out uvec2 varying_F;
 flat out uvec4 varying_G;
 
 // This needs to be outside clang-format so the ubo comment is in the right place
+// GLES2 simplification: uniforms de material como variaveis comuns (sem UBO).
+// A string #MATERIAL_UNIFORMS abaixo ja vem com "uniform " em cada declaracao
+// (montada em CanvasShaderData::set_code, inclusive indices uint de globais).
 #ifdef MATERIAL_UNIFORMS_USED
-layout(std140) uniform MaterialUniforms{ //ubo:4
 
 #MATERIAL_UNIFORMS
 
-};
 #endif
 
 uniform mediump uint batch_flags;
@@ -346,13 +347,11 @@ uniform highp uint specular_shininess_in;
 layout(location = 0) out vec4 frag_color;
 
 /* clang-format off */
-// This needs to be outside clang-format so the ubo comment is in the right place
+// GLES2 simplification: ver comentario no bloco de vertex acima.
 #ifdef MATERIAL_UNIFORMS_USED
-layout(std140) uniform MaterialUniforms{ //ubo:4
 
 #MATERIAL_UNIFORMS
 
-};
 #endif
 /* clang-format on */
 
