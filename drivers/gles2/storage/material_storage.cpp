@@ -2094,6 +2094,16 @@ GLuint MaterialStorage::global_shader_parameters_get_uniform_buffer() const {
 	return global_shader_uniforms.buffer;
 }
 
+void MaterialStorage::global_shader_parameters_upload_as_uniforms(GLint p_location) const {
+	if (p_location < 0 || global_shader_uniforms.buffer_values == nullptr) {
+		return;
+	}
+	// Matches the hardcoded MAX_GLOBAL_SHADER_UNIFORMS canvas define.
+	const int table_size = 256;
+	const int count = MIN(global_shader_uniforms.buffer_size, table_size);
+	glUniform4fv(p_location, count, (const GLfloat *)global_shader_uniforms.buffer_values);
+}
+
 int32_t MaterialStorage::global_shader_parameters_instance_allocate(RID p_instance) {
 	ERR_FAIL_COND_V(global_shader_uniforms.instance_buffer_pos.has(p_instance), -1);
 	int32_t pos = _global_shader_uniform_allocate(ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES);
@@ -2742,7 +2752,23 @@ void CanvasShaderData::set_code(const String &p_code) {
 		}
 	}
 
-	MaterialStorage::get_singleton()->shaders.canvas_shader.version_set_code(version, gen_code.code, material_uniforms_code, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
+	Vector<String> canvas_defines = gen_code.defines;
+	{
+		// Declare the plain global table only when user code references it,
+		// so default programs stay small.
+		bool uses_global_table = false;
+		for (const KeyValue<String, String> &E : gen_code.code) {
+			if (E.value.contains("global_shader_uniforms[")) {
+				uses_global_table = true;
+				break;
+			}
+		}
+		if (uses_global_table) {
+			canvas_defines.push_back("#define CANVAS_GLOBALS_USED\n");
+		}
+	}
+
+	MaterialStorage::get_singleton()->shaders.canvas_shader.version_set_code(version, gen_code.code, material_uniforms_code, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], canvas_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.canvas_shader.version_is_valid(version));
 
 	vertex_input_mask = RSE::ARRAY_FORMAT_VERTEX | RSE::ARRAY_FORMAT_COLOR | RSE::ARRAY_FORMAT_TEX_UV;

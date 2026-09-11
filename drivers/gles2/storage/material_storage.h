@@ -648,6 +648,9 @@ public:
 	virtual void global_shader_parameters_instance_update(RID p_instance, int p_index, const Variant &p_value, int p_flags_count = 0) override;
 
 	GLuint global_shader_parameters_get_uniform_buffer() const;
+	// GLES2 simplification: uploads the global table as a plain uniform array
+	// (no UBO). Values mirror GlobalShaderUniforms::buffer_values.
+	void global_shader_parameters_upload_as_uniforms(GLint p_location) const;
 
 	/* SHADER API */
 

@@ -28,9 +28,13 @@
 #define BATCH_FLAGS_DEFAULT_NORMAL_MAP_USED uint(1 << 9)
 #define BATCH_FLAGS_DEFAULT_SPECULAR_MAP_USED uint(1 << 10)
 
-layout(std140) uniform GlobalShaderUniformData { //ubo:1
-	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
-};
+// GLES2 simplification (low-end 3D): the global table was a UBO (std140);
+// converted to a plain uniform array, uploaded once per program per frame from
+// GlobalShaderUniforms::buffer_values. Only declared when user code references
+// globals, so default programs stay small. Shader usage unchanged.
+#ifdef CANVAS_GLOBALS_USED
+uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
+#endif
 
 // GLES2 simplification (low-end 3D): CanvasData was a UBO (std140);
 // converted to plain variables, one by one, like Godot 3 / ansraer fork gles2.

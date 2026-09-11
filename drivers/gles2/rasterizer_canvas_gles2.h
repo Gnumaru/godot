@@ -152,7 +152,6 @@ class RasterizerCanvasGLES2 : public RendererCanvasRender {
 
 public:
 	enum {
-		GLOBAL_UNIFORM_LOCATION = 1,
 		INSTANCE_UNIFORM_LOCATION = 3,
 		MATERIAL_UNIFORM_LOCATION = 4,
 	};
@@ -330,6 +329,11 @@ public:
 		uint64_t light_uniforms_frame = 0;
 		// Base locations of light_array[0].<member> for each struct member.
 		GLint light_uniform_locations[LIGHT_MEMBER_COUNT];
+
+		// GLES2 simplification: global table as a plain uniform array (no UBO).
+		GLuint global_uniforms_program = 0;
+		uint64_t global_uniforms_frame = 0;
+		GLint global_uniforms_location = -1;
 
 		RSE::CanvasItemTextureFilter default_filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_DEFAULT;
 		RSE::CanvasItemTextureRepeat default_repeat = RSE::CANVAS_ITEM_TEXTURE_REPEAT_DEFAULT;

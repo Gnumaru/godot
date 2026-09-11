@@ -361,12 +361,8 @@ void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_
 
 	state.tex_to_sdf_state = 1.0f / float((canvas_scale.x + canvas_scale.y) * 0.5);
 
-	{
-		GLuint global_buffer = material_storage->global_shader_parameters_get_uniform_buffer();
-
-		glBindBufferBase(GL_UNIFORM_BUFFER, GLOBAL_UNIFORM_LOCATION, global_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
-	}
+	// GLES2 simplification: global table goes to a plain uniform array per
+	// program (see batch loop); no UBO bind here.
 
 	glActiveTexture(GL_TEXTURE0 + GLES2::Config::get_singleton()->max_texture_image_units - 5);
 	glBindTexture(GL_TEXTURE_2D, texture_storage->render_target_get_sdf_texture(p_to_render_target));
@@ -728,6 +724,19 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 
 		// GLES2 simplification: 2D lights as plain uniforms (no UBO).
 		_set_light_uniforms(shader_version, variant, specialization);
+
+		// GLES2 simplification: global table as a plain uniform array (no UBO),
+		// uploaded once per program per frame.
+		{
+			uint64_t frame = RSG::rasterizer->get_frame_number();
+			GLuint program = material_storage->shaders.canvas_shader.version_get_program(shader_version, variant, specialization);
+			if (program != 0 && (state.global_uniforms_program != program || state.global_uniforms_frame != frame)) {
+				state.global_uniforms_location = glGetUniformLocation(program, "global_shader_uniforms");
+				state.global_uniforms_program = program;
+				state.global_uniforms_frame = frame;
+				material_storage->global_shader_parameters_upload_as_uniforms(state.global_uniforms_location);
+			}
+		}
 
 		// GLES2 simplification: material uniforms as plain variables (no UBO).
 		if (material_data) {
