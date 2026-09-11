@@ -109,6 +109,10 @@ public:
 	// ANGLE shader workaround.
 	bool polyfill_half2float = true;
 
+	// GLES2 simplification: skinning de esqueletos em CPU, sem transform feedback
+	// (padrao do gles2 do Godot 3: use_skeleton_software).
+	bool use_skeleton_software = true;
+
 #ifdef ANDROID_ENABLED
 	PFNGLFRAMEBUFFERTEXTUREMULTIVIEWOVRPROC eglFramebufferTextureMultiviewOVR = nullptr;
 	PFNGLTEXSTORAGE3DMULTISAMPLEPROC eglTexStorage3DMultisample = nullptr;

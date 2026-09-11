@@ -238,6 +238,8 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 			GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s->vertex_buffer, new_surface.vertex_data.size(), new_surface.vertex_data.ptr(), (s->format & RSE::ARRAY_FLAG_USE_DYNAMIC_UPDATE) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW, "Mesh vertex buffer");
 			s->vertex_buffer_size = new_surface.vertex_data.size();
 		}
+		// GLES2 simplification: retem copia CPU para skinning em software.
+		s->vertex_data_cpu = new_surface.vertex_data;
 	}
 
 	if (new_surface.attribute_data.size()) {
@@ -252,6 +254,8 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 		glBindBuffer(GL_ARRAY_BUFFER, s->skin_buffer);
 		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s->skin_buffer, new_surface.skin_data.size(), new_surface.skin_data.ptr(), (s->format & RSE::ARRAY_FLAG_USE_DYNAMIC_UPDATE) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW, "Mesh skin buffer");
 		s->skin_buffer_size = new_surface.skin_data.size();
+		// GLES2 simplification: retem copia CPU para skinning em software.
+		s->skin_data_cpu = new_surface.skin_data;
 	}
 
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -359,6 +363,8 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 	s->uv_scale = new_surface.uv_scale;
 
 	if (new_surface.skin_data.size() || mesh->blend_shape_count > 0) {
+		// GLES2 simplification: retem blend shapes na CPU para skinning em software.
+		s->blend_shape_data_cpu = new_surface.blend_shape_data;
 		// Size must match the size of the vertex array.
 		int size = new_surface.vertex_data.size();
 		int vertex_size = 0;
@@ -549,6 +555,13 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
 	glBindBuffer(GL_ARRAY_BUFFER, mesh->surfaces[p_surface]->vertex_buffer);
 	glBufferSubData(GL_ARRAY_BUFFER, p_offset, data_size, r);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	// GLES2 simplification: espelha na copia CPU (layout sem padding).
+	Vector<uint8_t> &cpu = mesh->surfaces[p_surface]->vertex_data_cpu;
+	if (p_offset < cpu.size()) {
+		uint64_t copy_size = MIN(data_size, uint64_t(cpu.size() - p_offset));
+		memcpy(cpu.ptrw() + p_offset, r, copy_size);
+	}
 }
 
 void MeshStorage::mesh_surface_update_attribute_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -579,6 +592,13 @@ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int
 	glBindBuffer(GL_ARRAY_BUFFER, mesh->surfaces[p_surface]->skin_buffer);
 	glBufferSubData(GL_ARRAY_BUFFER, p_offset, data_size, r);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	// GLES2 simplification: espelha na copia CPU.
+	Vector<uint8_t> &cpu = mesh->surfaces[p_surface]->skin_data_cpu;
+	if (p_offset < cpu.size()) {
+		uint64_t copy_size = MIN(data_size, uint64_t(cpu.size() - p_offset));
+		memcpy(cpu.ptrw() + p_offset, r, copy_size);
+	}
 }
 
 void MeshStorage::mesh_surface_update_index_region(RID p_mesh, int p_surface, int p_offset, const Vector<uint8_t> &p_data) {
@@ -1312,8 +1332,267 @@ void MeshStorage::_blend_shape_bind_mesh_instance_buffer(MeshInstance *p_mi, uin
 	}
 }
 
+// GLES2 simplification: equivalentes CPU das funcoes octaedricas de skeleton.glsl
+// (oct_to_vec3, vec3_to_oct, oct_to_tang, tang_to_oct), para skinning em software.
+static float _sw_unorm16_to_float(uint16_t p_v) {
+	return float(p_v) * (1.0f / 65535.0f);
+}
+
+static Vector3 _sw_oct_to_vec3(const Vector2 &p_oct) {
+	Vector2 oct = p_oct * 2.0f - Vector2(1.0f, 1.0f);
+	float ox = oct.x;
+	float oy = oct.y;
+	float z = 1.0f - Math::abs(ox) - Math::abs(oy);
+	float x = ox;
+	float y = oy;
+	if (z < 0.0f) {
+		x = (1.0f - Math::abs(oy)) * (ox >= 0.0f ? 1.0f : -1.0f);
+		y = (1.0f - Math::abs(ox)) * (oy >= 0.0f ? 1.0f : -1.0f);
+	}
+	return Vector3(x, y, z).normalized();
+}
+
+static Vector2 _sw_vec3_to_oct(const Vector3 &p_e) {
+	float inv = 1.0f / MAX(Math::abs(p_e.x) + Math::abs(p_e.y) + Math::abs(p_e.z), 1e-7f);
+	Vector3 e = p_e * inv;
+	Vector2 oct;
+	if (e.z >= 0.0f) {
+		oct = Vector2(e.x, e.y);
+	} else {
+		float sx = e.x >= 0.0f ? 1.0f : -1.0f;
+		float sy = e.y >= 0.0f ? 1.0f : -1.0f;
+		oct = Vector2((1.0f - Math::abs(e.y)) * sx, (1.0f - Math::abs(e.x)) * sy);
+	}
+	return oct * 0.5f + Vector2(0.5f, 0.5f);
+}
+
+static Vector4 _sw_oct_to_tang(const Vector2 &p_o) {
+	Vector2 oct(p_o.x, Math::abs(p_o.y) * 2.0f - 1.0f);
+	Vector3 t = _sw_oct_to_vec3(oct);
+	float w = p_o.y > 0.0f ? 1.0f : (p_o.y < 0.0f ? -1.0f : 0.0f);
+	return Vector4(t.x, t.y, t.z, w);
+}
+
+static Vector2 _sw_tang_to_oct(const Vector4 &p_b) {
+	Vector2 oct = _sw_vec3_to_oct(Vector3(p_b.x, p_b.y, p_b.z));
+	oct.y = oct.y * 0.5f + 0.5f;
+	if (p_b.w < 0.0f) {
+		oct.y = 1.0f - oct.y;
+	}
+	return oct;
+}
+
+// GLES2 simplification: skinning em CPU (blend shapes + esqueletos 2D/3D),
+// replica a matematica do skeleton.glsl sem transform feedback.
+// Retorna false quando o formato exige o caminho TF legado (atributos comprimidos
+// ou copias CPU ausentes). Buffers de saida usam o mesmo layout do caminho TF
+// (posicoes float + normais/tangentes oct em float), entao o render nao muda.
+bool MeshStorage::_mesh_instance_process_software(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface, float p_base_weight, bool p_can_use_skeleton, bool p_use_8_weights, bool p_array_is_2d) {
+	Mesh::Surface *s = p_mi->mesh->surfaces[p_surface];
+	MeshInstance::Surface &is = p_mi->surfaces[p_surface];
+
+	if (s->format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) {
+		return false;
+	}
+	if (s->vertex_data_cpu.is_empty()) {
+		return false;
+	}
+	if (p_can_use_skeleton && s->skin_data_cpu.is_empty()) {
+		return false;
+	}
+
+	const uint32_t vertex_count = s->vertex_count;
+	if (vertex_count == 0) {
+		return true;
+	}
+	const bool has_normal = (s->format & (1ULL << RSE::ARRAY_NORMAL)) && !p_array_is_2d;
+	const bool has_tangent = (s->format & (1ULL << RSE::ARRAY_TANGENT)) && !p_array_is_2d;
+	const uint32_t blend_count = p_mi->mesh->blend_shape_count;
+	if (blend_count > 0 && s->blend_shape_data_cpu.size() < size_t(blend_count) * size_t(s->vertex_data_cpu.size())) {
+		return false;
+	}
+
+	const uint32_t pos_size = p_array_is_2d ? 2 : 3;
+	const uint32_t pos_bytes = pos_size * sizeof(float);
+	const uint32_t nrm_block = pos_bytes * vertex_count;
+
+	const uint8_t *base_ptr = s->vertex_data_cpu.ptr();
+	const uint8_t *skin_ptr = s->skin_data_cpu.ptr();
+	const uint8_t *blend_ptr = s->blend_shape_data_cpu.ptr();
+	const int shape_size = s->vertex_data_cpu.size();
+
+	Transform2D skeleton_xform_2d;
+	if (p_can_use_skeleton && p_array_is_2d && p_sk != nullptr) {
+		skeleton_xform_2d = p_mi->canvas_item_transform_2d.affine_inverse() * p_sk->base_transform_2d;
+	}
+
+	const float *sk_data = (p_can_use_skeleton && p_sk != nullptr) ? p_sk->data.ptr() : nullptr;
+	const int bone_floats = p_array_is_2d ? 8 : 12;
+	const int bone_sets = p_use_8_weights ? 2 : 1;
+	const int skin_stride = int(sizeof(uint16_t)) * (p_use_8_weights ? 16 : 8);
+
+	const int out_stride = is.vertex_stride_cache;
+	const int out_size = out_stride * int(vertex_count);
+	Vector<uint8_t> out;
+	out.resize_initialized(out_size);
+	uint8_t *out_ptr = out.ptrw();
+
+	for (uint32_t v = 0; v < vertex_count; v++) {
+		const float *bp = (const float *)(base_ptr + v * pos_bytes);
+		Vector3 pos(bp[0], pos_size > 1 ? bp[1] : 0.0f, pos_size > 2 ? bp[2] : 0.0f);
+		Vector3 nrm(0.0f, 0.0f, 1.0f);
+		Vector4 tan(0.0f, 0.0f, 1.0f, 1.0f);
+		if (has_normal) {
+			const uint16_t *np = (const uint16_t *)(base_ptr + nrm_block + v * sizeof(uint16_t) * 2);
+			nrm = _sw_oct_to_vec3(Vector2(_sw_unorm16_to_float(np[0]), _sw_unorm16_to_float(np[1])));
+		}
+		if (has_tangent) {
+			const uint32_t tan_block = nrm_block + (has_normal ? sizeof(uint16_t) * 2 * vertex_count : 0);
+			const uint16_t *tp = (const uint16_t *)(base_ptr + tan_block + v * sizeof(uint16_t) * 2);
+			tan = _sw_oct_to_tang(Vector2(_sw_unorm16_to_float(tp[0]), _sw_unorm16_to_float(tp[1])));
+		}
+
+		if (blend_count > 0) {
+			pos *= p_base_weight;
+			if (has_normal) {
+				nrm *= p_base_weight;
+			}
+			if (has_tangent) {
+				tan = Vector4(tan.x * p_base_weight, tan.y * p_base_weight, tan.z * p_base_weight, tan.w);
+			}
+			for (uint32_t bs = 0; bs < blend_count; bs++) {
+				float w = p_mi->blend_weights[bs];
+				if (Math::is_zero_approx(w)) {
+					continue;
+				}
+				const float *spp = (const float *)(blend_ptr + bs * shape_size + v * pos_bytes);
+				pos += Vector3(spp[0], pos_size > 1 ? spp[1] : 0.0f, pos_size > 2 ? spp[2] : 0.0f) * w;
+				if (has_normal) {
+					const uint16_t *snp = (const uint16_t *)(blend_ptr + bs * shape_size + nrm_block + v * sizeof(uint16_t) * 2);
+					nrm += _sw_oct_to_vec3(Vector2(_sw_unorm16_to_float(snp[0]), _sw_unorm16_to_float(snp[1]))) * w;
+				}
+				if (has_tangent) {
+					const uint32_t tan_block = nrm_block + (has_normal ? sizeof(uint16_t) * 2 * vertex_count : 0);
+					const uint16_t *stp = (const uint16_t *)(blend_ptr + bs * shape_size + tan_block + v * sizeof(uint16_t) * 2);
+					Vector4 tb = _sw_oct_to_tang(Vector2(_sw_unorm16_to_float(stp[0]), _sw_unorm16_to_float(stp[1])));
+					tan = Vector4(tan.x + tb.x * w, tan.y + tb.y * w, tan.z + tb.z * w, tan.w);
+				}
+			}
+			if (p_array_is_2d) {
+				// Replica o normalize() do FINAL_PASS 2D+blend do skeleton.glsl.
+				pos = pos.normalized();
+			}
+		}
+
+		if (p_can_use_skeleton && sk_data != nullptr) {
+			if (p_array_is_2d) {
+				Vector2 acc(0.0f, 0.0f);
+				Vector2 pv(pos.x, pos.y);
+				for (int set = 0; set < bone_sets; set++) {
+					const uint16_t *bu = (const uint16_t *)(skin_ptr + v * skin_stride + set * sizeof(uint16_t) * 8);
+					const uint16_t *wu = bu + 4;
+					for (int k = 0; k < 4; k++) {
+						uint32_t bi = bu[k];
+						float w = _sw_unorm16_to_float(wu[k]);
+						if (w == 0.0f || bi >= uint32_t(p_sk->size)) {
+							continue;
+						}
+						const float *dp = sk_data + bi * bone_floats;
+						Transform2D b;
+						b.columns[0][0] = dp[0];
+						b.columns[1][0] = dp[1];
+						b.columns[2][0] = dp[3];
+						b.columns[0][1] = dp[4];
+						b.columns[1][1] = dp[5];
+						b.columns[2][1] = dp[7];
+						acc += b.xform(pv) * w;
+					}
+				}
+				Vector2 skinned = skeleton_xform_2d.xform(acc);
+				pos = Vector3(skinned.x, skinned.y, 0.0f);
+			} else {
+				Vector3 acc_p(0.0f, 0.0f, 0.0f);
+				Vector3 acc_n(0.0f, 0.0f, 0.0f);
+				Vector3 acc_t(0.0f, 0.0f, 0.0f);
+				for (int set = 0; set < bone_sets; set++) {
+					const uint16_t *bu = (const uint16_t *)(skin_ptr + v * skin_stride + set * sizeof(uint16_t) * 8);
+					const uint16_t *wu = bu + 4;
+					for (int k = 0; k < 4; k++) {
+						uint32_t bi = bu[k];
+						float w = _sw_unorm16_to_float(wu[k]);
+						if (w == 0.0f || bi >= uint32_t(p_sk->size)) {
+							continue;
+						}
+						const float *dp = sk_data + bi * bone_floats;
+						Transform3D b;
+						b.basis.rows[0][0] = dp[0];
+						b.basis.rows[0][1] = dp[1];
+						b.basis.rows[0][2] = dp[2];
+						b.origin.x = dp[3];
+						b.basis.rows[1][0] = dp[4];
+						b.basis.rows[1][1] = dp[5];
+						b.basis.rows[1][2] = dp[6];
+						b.origin.y = dp[7];
+						b.basis.rows[2][0] = dp[8];
+						b.basis.rows[2][1] = dp[9];
+						b.basis.rows[2][2] = dp[10];
+						b.origin.z = dp[11];
+						acc_p += b.xform(pos) * w;
+						if (has_normal) {
+							acc_n += b.basis.xform(nrm) * w;
+						}
+						if (has_tangent) {
+							acc_t += b.basis.xform(Vector3(tan.x, tan.y, tan.z)) * w;
+						}
+					}
+				}
+				pos = acc_p;
+				if (has_normal) {
+					nrm = acc_n.normalized();
+				}
+				if (has_tangent) {
+					Vector3 tn = acc_t.normalized();
+					tan = Vector4(tn.x, tn.y, tn.z, tan.w);
+				}
+			}
+		} else if (blend_count > 0) {
+			if (has_normal) {
+				nrm = nrm.normalized();
+			}
+			if (has_tangent) {
+				Vector3 tn = Vector3(tan.x, tan.y, tan.z).normalized();
+				tan = Vector4(tn.x, tn.y, tn.z, tan.w);
+			}
+		}
+
+		float *op = (float *)(out_ptr + v * out_stride);
+		op[0] = pos.x;
+		op[1] = pos.y;
+		if (pos_size > 2) {
+			op[2] = pos.z;
+		}
+		if (has_normal) {
+			Vector2 o = _sw_vec3_to_oct(nrm);
+			float *np2 = (float *)(out_ptr + v * out_stride + is.vertex_normal_offset_cache);
+			np2[0] = o.x;
+			np2[1] = o.y;
+		}
+		if (has_tangent) {
+			Vector2 o = _sw_tang_to_oct(tan);
+			float *tp2 = (float *)(out_ptr + v * out_stride + is.vertex_tangent_offset_cache);
+			tp2[0] = o.x;
+			tp2[1] = o.y;
+		}
+	}
+
+	glBindBuffer(GL_ARRAY_BUFFER, is.vertex_buffers[is.current_vertex_buffer]);
+	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, is.vertex_buffers[is.current_vertex_buffer], out_size, out.ptr(), GL_DYNAMIC_DRAW, "MeshInstance vertex buffer (software)");
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	return true;
+}
+
 void MeshStorage::_compute_skeleton(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface) {
-	// Add in the bones and weights.
 	glBindBuffer(GL_ARRAY_BUFFER, p_mi->mesh->surfaces[p_surface]->skin_buffer);
 
 	bool use_8_weights = p_mi->surfaces[p_surface].format_cache & RSE::ARRAY_FLAG_USE_8_BONE_WEIGHTS;
@@ -1404,11 +1683,19 @@ void MeshStorage::update_mesh_instances() {
 				continue;
 			}
 
-			bool array_is_2d = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_2D_VERTICES;
-			bool can_use_skeleton = sk != nullptr && sk->use_2d == array_is_2d && (mi->surfaces[i].format_cache & RSE::ARRAY_FORMAT_BONES);
-			bool use_8_weights = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_8_BONE_WEIGHTS;
+		bool array_is_2d = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_2D_VERTICES;
+		bool can_use_skeleton = sk != nullptr && sk->use_2d == array_is_2d && (mi->surfaces[i].format_cache & RSE::ARRAY_FORMAT_BONES);
+		bool use_8_weights = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_8_BONE_WEIGHTS;
 
-			// Always process blend shapes first.
+		// GLES2 simplification: skinning em CPU, sem transform feedback.
+		if (GLES2::Config::get_singleton()->use_skeleton_software && (mi->mesh->blend_shape_count > 0 || can_use_skeleton)) {
+			if (_mesh_instance_process_software(mi, sk, i, base_weight, can_use_skeleton, use_8_weights, array_is_2d)) {
+				continue;
+			}
+			// Formato nao suportado em CPU (ex. atributos comprimidos): usa TF legado.
+		}
+
+		// Always process blend shapes first.
 			if (mi->mesh->blend_shape_count) {
 				SkeletonShaderGLES2::ShaderVariant variant = SkeletonShaderGLES2::MODE_BASE_PASS;
 				uint64_t specialization = 0;

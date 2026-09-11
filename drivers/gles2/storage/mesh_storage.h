@@ -111,6 +111,12 @@ struct Mesh {
 
 		Vector<AABB> bone_aabbs;
 
+		// GLES2 simplification: copias CPU retidas para skinning em software
+		// (sem transform feedback). Layout identico ao enviado (sem padding).
+		Vector<uint8_t> vertex_data_cpu;
+		Vector<uint8_t> skin_data_cpu;
+		Vector<uint8_t> blend_shape_data_cpu; // todas as blend shapes concatenadas.
+
 		// Transform used in runtime bone AABBs compute.
 		// As bone AABBs are saved in Mesh space, but bones animation is in Skeleton space.
 		Transform3D mesh_to_skeleton_xform;
@@ -284,6 +290,9 @@ private:
 
 	_FORCE_INLINE_ void _skeleton_make_dirty(Skeleton *skeleton);
 	void _compute_skeleton(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface);
+	// GLES2 simplification: skinning em CPU (blend shapes + ossos), sem transform feedback.
+	// Retorna false se o formato exige o caminho TF (atributos comprimidos).
+	bool _mesh_instance_process_software(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface, float p_base_weight, bool p_can_use_skeleton, bool p_use_8_weights, bool p_array_is_2d);
 
 	Skeleton *skeleton_dirty_list = nullptr;
 
