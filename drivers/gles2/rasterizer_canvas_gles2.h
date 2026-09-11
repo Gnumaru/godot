@@ -152,7 +152,6 @@ class RasterizerCanvasGLES2 : public RendererCanvasRender {
 
 public:
 	enum {
-		INSTANCE_UNIFORM_LOCATION = 3,
 		MATERIAL_UNIFORM_LOCATION = 4,
 	};
 
