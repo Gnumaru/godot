@@ -152,14 +152,28 @@ class RasterizerCanvasGLES2 : public RendererCanvasRender {
 
 public:
 	enum {
-		// GLES2 simplification: BASE_UNIFORM_LOCATION removido (CanvasData virou uniforms comuns).
 		GLOBAL_UNIFORM_LOCATION = 1,
-		LIGHT_UNIFORM_LOCATION = 2,
 		INSTANCE_UNIFORM_LOCATION = 3,
 		MATERIAL_UNIFORM_LOCATION = 4,
 	};
 
-	// GLES2 simplification: StateBuffer removido (CanvasData virou uniforms comuns).
+	// GLES2 simplification: 2D light struct members as plain uniforms (no UBO).
+	enum LightUniformMember {
+		LIGHT_MEMBER_TEXTURE_MATRIX,
+		LIGHT_MEMBER_SHADOW_MATRIX,
+		LIGHT_MEMBER_COLOR,
+		LIGHT_MEMBER_SHADOW_COLOR,
+		LIGHT_MEMBER_FLAGS,
+		LIGHT_MEMBER_SHADOW_PIXEL_SIZE,
+		LIGHT_MEMBER_HEIGHT,
+		LIGHT_MEMBER_POSITION,
+		LIGHT_MEMBER_SHADOW_ZFAR_INV,
+		LIGHT_MEMBER_SHADOW_Y_OFS,
+		LIGHT_MEMBER_ATLAS_RECT,
+		LIGHT_MEMBER_COUNT,
+	};
+
+	// GLES2 simplification: StateBuffer removed (CanvasData became plain uniforms).
 
 	struct PolygonBuffers {
 		GLuint vertex_buffer = 0;
@@ -263,8 +277,7 @@ public:
 	// to avoid the GPU stalling to wait for a resource to become available.
 	struct DataBuffer {
 		Vector<GLuint> instance_buffers;
-		GLuint light_ubo = 0;
-		// GLES2 simplification: state_ubo removido (CanvasData virou uniforms comuns).
+		// GLES2 simplification: no lights UBO (plain light uniforms).
 		uint64_t last_frame_used = -3;
 		GLsync fence = GLsync();
 	};
@@ -296,8 +309,8 @@ public:
 
 		double time = 0.0;
 
-		// GLES2 simplification: CanvasData como uniforms comuns (sem UBO).
-		// Preenchido em canvas_render_items, aplicado por batch em _render_items.
+		// GLES2 simplification: CanvasData as plain uniforms (no UBO).
+		// Filled in canvas_render_items, applied per batch in _render_items.
 		Transform2D canvas_transform_state;
 		Transform3D screen_transform_state;
 		Transform2D canvas_normal_transform_state;
@@ -309,6 +322,14 @@ public:
 		float sdf_to_screen_state[2] = { 1.0f, 1.0f };
 		uint32_t directional_light_count_state = 0;
 		float tex_to_sdf_state = 1.0f;
+
+		// GLES2 simplification: 2D lights as plain uniforms (no UBO).
+		// Staged per canvas render, uploaded once per program per frame.
+		uint32_t light_count_state = 0;
+		GLuint light_uniforms_program = 0;
+		uint64_t light_uniforms_frame = 0;
+		// Base locations of light_array[0].<member> for each struct member.
+		GLint light_uniform_locations[LIGHT_MEMBER_COUNT];
 
 		RSE::CanvasItemTextureFilter default_filter = RSE::CANVAS_ITEM_TEXTURE_FILTER_DEFAULT;
 		RSE::CanvasItemTextureRepeat default_repeat = RSE::CANVAS_ITEM_TEXTURE_REPEAT_DEFAULT;
@@ -354,6 +375,9 @@ public:
 	void _record_item_commands(const Item *p_item, RID p_render_target, const Transform2D &p_canvas_transform_inverse, Item *&current_clip, GLES2::CanvasShaderData::BlendMode p_blend_mode, Light *p_lights, uint32_t &r_index, bool &r_break_batch, bool &r_sdf_used, const Point2 &p_repeat_offset);
 	void _render_batch(Light *p_lights, uint32_t p_index, RenderingServerTypes::RenderInfo *r_render_info = nullptr);
 	bool _bind_material(GLES2::CanvasMaterialData *p_material_data, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
+	// GLES2 simplification: uploads staged 2D lights as plain uniforms, once per
+	// program per frame (no UBO).
+	void _set_light_uniforms(RID p_shader_version, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
 	void _new_batch(bool &r_batch_broken);
 	void _add_to_batch(uint32_t &r_index, bool &r_batch_broken);
 	void _allocate_instance_data_buffer();

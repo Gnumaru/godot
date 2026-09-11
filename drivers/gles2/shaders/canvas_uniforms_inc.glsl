@@ -32,10 +32,9 @@ layout(std140) uniform GlobalShaderUniformData { //ubo:1
 	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
 };
 
-// GLES2 simplification (3D minimo low-end): CanvasData era um UBO (std140);
-// convertido para variaveis comuns, uma a uma como no gles2 do Godot 3 / fork ansraer.
-// LightData e GlobalShaderUniformData permanecem UBO por enquanto (arrays grandes,
-// fora dos limites do GLES2 real; exigem reestruturacao futura).
+// GLES2 simplification (low-end 3D): CanvasData was a UBO (std140);
+// converted to plain variables, one by one, like Godot 3 / ansraer fork gles2.
+// GlobalShaderUniformData stays a UBO for now (256-entry array, needs restructuring).
 uniform highp mat4 canvas_transform;
 uniform highp mat4 screen_transform;
 uniform highp mat4 canvas_normal_transform;
@@ -81,7 +80,8 @@ struct Light {
 	vec4 atlas_rect;
 };
 
-layout(std140) uniform LightData { //ubo:2
-	Light light_array[MAX_LIGHTS];
-};
+// GLES2 simplification (low-end 3D): LightData was a UBO (std140);
+// converted to a plain uniform array. Combined with the 16-light render cap,
+// it fits real GLES2 uniform limits. Shader usage unchanged.
+uniform Light light_array[MAX_LIGHTS];
 #endif // DISABLE_LIGHTING

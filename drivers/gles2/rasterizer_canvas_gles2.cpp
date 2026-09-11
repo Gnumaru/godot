@@ -290,18 +290,11 @@ void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_
 		light_count = index;
 	}
 
+	state.light_count_state = light_count;
+
 	if (light_count > 0) {
-		glBindBufferBase(GL_UNIFORM_BUFFER, LIGHT_UNIFORM_LOCATION, state.canvas_instance_data_buffers[state.current_data_buffer_index].light_ubo);
-
-#ifdef WEB_ENABLED
-		glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightUniform) * light_count, state.light_uniforms);
-#else
-		// On Desktop and mobile we map the memory without synchronizing for maximum speed.
-		void *ubo = glMapBufferRange(GL_UNIFORM_BUFFER, 0, sizeof(LightUniform) * light_count, GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
-		memcpy(ubo, state.light_uniforms, sizeof(LightUniform) * light_count);
-		glUnmapBuffer(GL_UNIFORM_BUFFER);
-#endif
-
+		// GLES2 simplification: light data goes to plain uniforms per program
+		// (see _set_light_uniforms); no UBO upload. Texture atlas binds stay.
 		GLuint texture_atlas = texture_storage->texture_atlas_get_texture();
 		if (texture_atlas == 0) {
 			GLES2::Texture *tex = texture_storage->get_texture(texture_storage->texture_gl_get_default(GLES2::DEFAULT_GL_TEXTURE_WHITE));
@@ -318,9 +311,9 @@ void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_
 		glBindTexture(GL_TEXTURE_2D, shadow_tex);
 	}
 
-	// GLES2 simplification (3D minimo low-end): CanvasData convertido de UBO
-	// para uniforms comuns. Calcula os valores aqui e aplica por batch com
-	// version_set_uniform apos version_bind_shader (padrao Godot 3 / fork).
+	// GLES2 simplification: CanvasData converted from UBO to plain uniforms.
+	// Values are computed here and applied per batch with version_set_uniform
+	// after version_bind_shader (Godot 3 / fork pattern).
 	Size2i ssize = texture_storage->render_target_get_size(p_to_render_target);
 
 	// If we've overridden the render target's color texture, then we need
@@ -719,7 +712,7 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::BATCH_FLAGS, state.canvas_instance_batches[i].flags, shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SPECULAR_SHININESS_IN, state.canvas_instance_batches[i].specular_shininess, shader_version, variant, specialization);
 
-		// GLES2 simplification: CanvasData como uniforms comuns (sem UBO).
+		// GLES2 simplification: CanvasData as plain uniforms (no UBO).
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::CANVAS_TRANSFORM, state.canvas_transform_state, shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SCREEN_TRANSFORM, state.screen_transform_state, shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::CANVAS_NORMAL_TRANSFORM, state.canvas_normal_transform_state, shader_version, variant, specialization);
@@ -733,7 +726,10 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::DIRECTIONAL_LIGHT_COUNT, state.directional_light_count_state, shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::TEX_TO_SDF, state.tex_to_sdf_state, shader_version, variant, specialization);
 
-		// GLES2 simplification: uniforms de material como variaveis comuns (sem UBO).
+		// GLES2 simplification: 2D lights as plain uniforms (no UBO).
+		_set_light_uniforms(shader_version, variant, specialization);
+
+		// GLES2 simplification: material uniforms as plain variables (no UBO).
 		if (material_data) {
 			material_data->bind_material_uniforms(material_storage->shaders.canvas_shader, shader_version, variant, specialization);
 		}
@@ -1305,6 +1301,82 @@ _FORCE_INLINE_ static uint32_t _indices_to_primitives(RSE::PrimitiveType p_primi
 	static const uint32_t divisor[RSE::PRIMITIVE_MAX] = { 1, 2, 1, 3, 1 };
 	static const uint32_t subtractor[RSE::PRIMITIVE_MAX] = { 0, 0, 1, 0, 2 };
 	return (p_indices - subtractor[p_primitive]) / divisor[p_primitive];
+}
+
+// GLES2 simplification: 2D lights as plain uniforms (no UBO), uploaded once per
+// program per frame from the staged LightUniform array. Member packing matches
+// the Light GLSL struct field order, so values transfer directly.
+void RasterizerCanvasGLES2::_set_light_uniforms(RID p_shader_version, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	if (state.light_count_state == 0) {
+		return;
+	}
+	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
+	GLuint program = material_storage->shaders.canvas_shader.version_get_program(p_shader_version, p_variant, p_specialization);
+	if (program == 0) {
+		return;
+	}
+	uint64_t frame = RSG::rasterizer->get_frame_number();
+	if (state.light_uniforms_program != program || state.light_uniforms_frame != frame) {
+		static const char *member_names[LIGHT_MEMBER_COUNT] = {
+			"light_array[0].texture_matrix",
+			"light_array[0].shadow_matrix",
+			"light_array[0].color",
+			"light_array[0].shadow_color",
+			"light_array[0].flags",
+			"light_array[0].shadow_pixel_size",
+			"light_array[0].height",
+			"light_array[0].position",
+			"light_array[0].shadow_zfar_inv",
+			"light_array[0].shadow_y_ofs",
+			"light_array[0].atlas_rect",
+		};
+		for (int i = 0; i < LIGHT_MEMBER_COUNT; i++) {
+			state.light_uniform_locations[i] = glGetUniformLocation(program, member_names[i]);
+		}
+		state.light_uniforms_program = program;
+		state.light_uniforms_frame = frame;
+
+		const uint32_t count = MIN(state.light_count_state, data.max_lights_per_render);
+		float tex_matrix[16 * 8];
+		float shadow_matrix[16 * 8];
+		float colors[16 * 4];
+		uint32_t shadow_colors[16];
+		uint32_t flags[16];
+		float shadow_pixel_sizes[16];
+		float heights[16];
+		float positions[16 * 2];
+		float shadow_zfar_invs[16];
+		float shadow_y_ofss[16];
+		float atlas_rects[16 * 4];
+		for (uint32_t l = 0; l < count; l++) {
+			const LightUniform &lu = state.light_uniforms[l];
+			memcpy(&tex_matrix[l * 8], lu.matrix, sizeof(float) * 8);
+			memcpy(&shadow_matrix[l * 8], lu.shadow_matrix, sizeof(float) * 8);
+			memcpy(&colors[l * 4], lu.color, sizeof(float) * 4);
+			uint32_t sc = 0;
+			memcpy(&sc, lu.shadow_color, sizeof(uint32_t));
+			shadow_colors[l] = sc;
+			flags[l] = lu.flags;
+			shadow_pixel_sizes[l] = lu.shadow_pixel_size;
+			heights[l] = lu.height;
+			positions[l * 2] = lu.position[0];
+			positions[l * 2 + 1] = lu.position[1];
+			shadow_zfar_invs[l] = lu.shadow_z_far_inv;
+			shadow_y_ofss[l] = lu.shadow_y_ofs;
+			memcpy(&atlas_rects[l * 4], lu.atlas_rect, sizeof(float) * 4);
+		}
+		glUniformMatrix2x4fv(state.light_uniform_locations[LIGHT_MEMBER_TEXTURE_MATRIX], count, GL_FALSE, tex_matrix);
+		glUniformMatrix2x4fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_MATRIX], count, GL_FALSE, shadow_matrix);
+		glUniform4fv(state.light_uniform_locations[LIGHT_MEMBER_COLOR], count, colors);
+		glUniform1uiv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_COLOR], count, shadow_colors);
+		glUniform1uiv(state.light_uniform_locations[LIGHT_MEMBER_FLAGS], count, flags);
+		glUniform1fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_PIXEL_SIZE], count, shadow_pixel_sizes);
+		glUniform1fv(state.light_uniform_locations[LIGHT_MEMBER_HEIGHT], count, heights);
+		glUniform2fv(state.light_uniform_locations[LIGHT_MEMBER_POSITION], count, positions);
+		glUniform1fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_ZFAR_INV], count, shadow_zfar_invs);
+		glUniform1fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_Y_OFS], count, shadow_y_ofss);
+		glUniform4fv(state.light_uniform_locations[LIGHT_MEMBER_ATLAS_RECT], count, atlas_rects);
+	}
 }
 
 void RasterizerCanvasGLES2::_render_batch(Light *p_lights, uint32_t p_index, RenderingServerTypes::RenderInfo *r_render_info) {
@@ -2603,20 +2675,16 @@ void RasterizerCanvasGLES2::free_polygon(PolygonID p_polygon) {
 // In theory allocations can reach as high as number of windows * 3 frames
 // because OpenGL can start rendering subsequent frames before finishing the current one
 void RasterizerCanvasGLES2::_allocate_instance_data_buffer() {
-	// GLES2 simplification: sem State UBO (CanvasData virou uniforms comuns).
-	GLuint new_buffers[2];
-	glGenBuffers(2, new_buffers);
-	// Batch UBO.
-	glBindBuffer(GL_ARRAY_BUFFER, new_buffers[0]);
-	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, new_buffers[0], data.max_instance_buffer_size, nullptr, GL_STREAM_DRAW, "2D Batch UBO[" + itos(state.current_data_buffer_index) + "][0]");
-	// Light uniform buffer.
-	glBindBuffer(GL_UNIFORM_BUFFER, new_buffers[1]);
-	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, new_buffers[1], sizeof(LightUniform) * data.max_lights_per_render, nullptr, GL_STREAM_DRAW, "2D Lights UBO[" + itos(state.current_data_buffer_index) + "]");
+	// GLES2 simplification: no State UBO (plain CanvasData) and no lights UBO.
+	GLuint new_buffer;
+	glGenBuffers(1, &new_buffer);
+	// Batch buffer.
+	glBindBuffer(GL_ARRAY_BUFFER, new_buffer);
+	GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, new_buffer, data.max_instance_buffer_size, nullptr, GL_STREAM_DRAW, "2D Batch UBO[" + itos(state.current_data_buffer_index) + "][0]");
 
 	state.current_data_buffer_index = (state.current_data_buffer_index + 1);
 	DataBuffer db;
-	db.instance_buffers.push_back(new_buffers[0]);
-	db.light_ubo = new_buffers[1];
+	db.instance_buffers.push_back(new_buffer);
 	db.last_frame_used = RSG::rasterizer->get_frame_number();
 	state.canvas_instance_data_buffers.insert(state.current_data_buffer_index, db);
 	state.current_data_buffer_index = state.current_data_buffer_index % state.canvas_instance_data_buffers.size();
@@ -2656,7 +2724,6 @@ RasterizerCanvasGLES2::RasterizerCanvasGLES2() {
 	singleton = this;
 	GLES2::TextureStorage *texture_storage = GLES2::TextureStorage::get_singleton();
 	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
-	GLES2::Config *config = GLES2::Config::get_singleton();
 
 	glVertexAttrib4f(RSE::ARRAY_COLOR, 1.0, 1.0, 1.0, 1.0);
 
@@ -2782,11 +2849,9 @@ RasterizerCanvasGLES2::RasterizerCanvasGLES2() {
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 	}
 
-	if (config->max_uniform_buffer_size < 65536) {
-		data.max_lights_per_render = 64;
-	} else {
-		data.max_lights_per_render = 256;
-	}
+	// GLES2 simplification (low-end 3D): 2D light cap so the array fits in
+	// plain uniforms (the original UBO held 64/256 lights per render).
+	data.max_lights_per_render = 16;
 
 	// Reserve 3 Uniform Buffers for instance data Frame N, N+1 and N+2
 	data.max_instances_per_buffer = uint32_t(GLOBAL_GET("rendering/gl_compatibility/item_buffer_size"));
@@ -2795,18 +2860,14 @@ RasterizerCanvasGLES2::RasterizerCanvasGLES2() {
 	state.canvas_instance_batches.reserve(200);
 
 	for (int i = 0; i < 3; i++) {
-		// GLES2 simplification: sem State UBO (CanvasData virou uniforms comuns).
-		GLuint new_buffers[2];
-		glGenBuffers(2, new_buffers);
-		// Batch UBO.
-		glBindBuffer(GL_ARRAY_BUFFER, new_buffers[0]);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, new_buffers[0], data.max_instance_buffer_size, nullptr, GL_STREAM_DRAW, "Batch UBO[0][0]");
-		// Light uniform buffer.
-		glBindBuffer(GL_UNIFORM_BUFFER, new_buffers[1]);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, new_buffers[1], sizeof(LightUniform) * data.max_lights_per_render, nullptr, GL_STREAM_DRAW, "2D lights UBO[0]");
+		// GLES2 simplification: no State UBO (plain CanvasData) and no lights UBO.
+		GLuint new_buffer;
+		glGenBuffers(1, &new_buffer);
+		// Batch buffer.
+		glBindBuffer(GL_ARRAY_BUFFER, new_buffer);
+		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, new_buffer, data.max_instance_buffer_size, nullptr, GL_STREAM_DRAW, "Batch UBO[0][0]");
 		DataBuffer db;
-		db.instance_buffers.push_back(new_buffers[0]);
-		db.light_ubo = new_buffers[1];
+		db.instance_buffers.push_back(new_buffer);
 		db.last_frame_used = 0;
 		db.fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		state.canvas_instance_data_buffers[i] = db;
@@ -2933,10 +2994,7 @@ RasterizerCanvasGLES2::~RasterizerCanvasGLES2() {
 				GLES2::Utilities::get_singleton()->buffer_free_data(state.canvas_instance_data_buffers[i].instance_buffers[j]);
 			}
 		}
-		if (state.canvas_instance_data_buffers[i].light_ubo) {
-			GLES2::Utilities::get_singleton()->buffer_free_data(state.canvas_instance_data_buffers[i].light_ubo);
-		}
-		// GLES2 simplification: State UBO removido (CanvasData virou uniforms comuns).
+		// GLES2 simplification: no State UBO (plain CanvasData) and no lights UBO.
 	}
 }
 
