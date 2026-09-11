@@ -48,16 +48,11 @@ MeshStorage *MeshStorage::get_singleton() {
 
 MeshStorage::MeshStorage() {
 	singleton = this;
-
-	{
-		skeleton_shader.shader.initialize();
-		skeleton_shader.shader_version = skeleton_shader.shader.version_create();
-	}
+	// No transform-feedback skeleton shader: skinning runs on the CPU.
 }
 
 MeshStorage::~MeshStorage() {
 	singleton = nullptr;
-	skeleton_shader.shader.version_free(skeleton_shader.shader_version);
 }
 
 /* MESH API */
@@ -238,7 +233,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 			GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s->vertex_buffer, new_surface.vertex_data.size(), new_surface.vertex_data.ptr(), (s->format & RSE::ARRAY_FLAG_USE_DYNAMIC_UPDATE) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW, "Mesh vertex buffer");
 			s->vertex_buffer_size = new_surface.vertex_data.size();
 		}
-		// GLES2 simplification: retem copia CPU para skinning em software.
+		// GLES2 simplification: retain a CPU copy for software skinning.
 		s->vertex_data_cpu = new_surface.vertex_data;
 	}
 
@@ -254,7 +249,7 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 		glBindBuffer(GL_ARRAY_BUFFER, s->skin_buffer);
 		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s->skin_buffer, new_surface.skin_data.size(), new_surface.skin_data.ptr(), (s->format & RSE::ARRAY_FLAG_USE_DYNAMIC_UPDATE) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW, "Mesh skin buffer");
 		s->skin_buffer_size = new_surface.skin_data.size();
-		// GLES2 simplification: retem copia CPU para skinning em software.
+		// GLES2 simplification: retain a CPU copy for software skinning.
 		s->skin_data_cpu = new_surface.skin_data;
 	}
 
@@ -363,66 +358,11 @@ void MeshStorage::mesh_add_surface(RID p_mesh, const RenderingServerTypes::Surfa
 	s->uv_scale = new_surface.uv_scale;
 
 	if (new_surface.skin_data.size() || mesh->blend_shape_count > 0) {
-		// GLES2 simplification: retem blend shapes na CPU para skinning em software.
+		// GLES2 simplification: blend shapes are retained on the CPU for software
+		// skinning; no per-shape GPU buffers are created.
 		s->blend_shape_data_cpu = new_surface.blend_shape_data;
-		// Size must match the size of the vertex array.
-		int size = new_surface.vertex_data.size();
-		int vertex_size = 0;
-		int position_stride = 0;
-		int normal_tangent_stride = 0;
-		int normal_offset = 0;
-		int tangent_offset = 0;
-		if ((new_surface.format & (1ULL << RSE::ARRAY_VERTEX))) {
-			if (new_surface.format & RSE::ARRAY_FLAG_USE_2D_VERTICES) {
-				vertex_size = 2;
-				position_stride = sizeof(float) * vertex_size;
-			} else {
-				if (new_surface.format & RSE::ARRAY_FLAG_COMPRESS_ATTRIBUTES) {
-					vertex_size = 4;
-					position_stride = sizeof(uint16_t) * vertex_size;
-				} else {
-					vertex_size = 3;
-					position_stride = sizeof(float) * vertex_size;
-				}
-			}
-		}
-		if ((new_surface.format & (1ULL << RSE::ARRAY_NORMAL))) {
-			normal_offset = position_stride * s->vertex_count;
-			normal_tangent_stride += sizeof(uint16_t) * 2;
-		}
-		if ((new_surface.format & (1ULL << RSE::ARRAY_TANGENT))) {
-			tangent_offset = normal_offset + normal_tangent_stride;
-			normal_tangent_stride += sizeof(uint16_t) * 2;
-		}
 
-		if (mesh->blend_shape_count > 0) {
-			// Blend shapes are passed as one large array, for OpenGL, we need to split each of them into their own buffer
-			s->blend_shapes = memnew_arr(Mesh::Surface::BlendShape, mesh->blend_shape_count);
-
-			for (uint32_t i = 0; i < mesh->blend_shape_count; i++) {
-				glGenVertexArrays(1, &s->blend_shapes[i].vertex_array);
-				glBindVertexArray(s->blend_shapes[i].vertex_array);
-				glGenBuffers(1, &s->blend_shapes[i].vertex_buffer);
-				glBindBuffer(GL_ARRAY_BUFFER, s->blend_shapes[i].vertex_buffer);
-				GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s->blend_shapes[i].vertex_buffer, size, new_surface.blend_shape_data.ptr() + i * size, (s->format & RSE::ARRAY_FLAG_USE_DYNAMIC_UPDATE) ? GL_DYNAMIC_DRAW : GL_STATIC_DRAW, "Mesh blend shape buffer");
-
-				if ((new_surface.format & (1ULL << RSE::ARRAY_VERTEX))) {
-					glEnableVertexAttribArray(RSE::ARRAY_VERTEX + 3);
-					glVertexAttribPointer(RSE::ARRAY_VERTEX + 3, vertex_size, GL_FLOAT, GL_FALSE, position_stride, CAST_INT_TO_UCHAR_PTR(0));
-				}
-				if ((new_surface.format & (1ULL << RSE::ARRAY_NORMAL))) {
-					// Normal and tangent are packed into the same attribute.
-					glEnableVertexAttribArray(RSE::ARRAY_NORMAL + 3);
-					glVertexAttribPointer(RSE::ARRAY_NORMAL + 3, 2, GL_UNSIGNED_SHORT, GL_TRUE, normal_tangent_stride, CAST_INT_TO_UCHAR_PTR(normal_offset));
-				}
-				if ((p_surface.format & (1ULL << RSE::ARRAY_TANGENT))) {
-					glEnableVertexAttribArray(RSE::ARRAY_TANGENT + 3);
-					glVertexAttribPointer(RSE::ARRAY_TANGENT + 3, 2, GL_UNSIGNED_SHORT, GL_TRUE, normal_tangent_stride, CAST_INT_TO_UCHAR_PTR(tangent_offset));
-				}
-			}
-			glBindVertexArray(0);
-			glBindBuffer(GL_ARRAY_BUFFER, 0);
-		}
+		// No GPU blend-shape buffers: the CPU copy (blend_shape_data_cpu) feeds software skinning.
 
 		glBindVertexArray(0);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -505,19 +445,7 @@ void MeshStorage::_mesh_surface_clear(Mesh *mesh, int p_surface) {
 		memdelete_arr(s.lods);
 	}
 
-	if (mesh->blend_shape_count) {
-		for (uint32_t j = 0; j < mesh->blend_shape_count; j++) {
-			if (s.blend_shapes[j].vertex_buffer != 0) {
-				GLES2::Utilities::get_singleton()->buffer_free_data(s.blend_shapes[j].vertex_buffer);
-				s.blend_shapes[j].vertex_buffer = 0;
-			}
-			if (s.blend_shapes[j].vertex_array != 0) {
-				glDeleteVertexArrays(1, &s.blend_shapes[j].vertex_array);
-				s.blend_shapes[j].vertex_array = 0;
-			}
-		}
-		memdelete_arr(s.blend_shapes);
-	}
+	// No GPU blend-shape buffers exist (CPU skinning only).
 
 	memdelete(mesh->surfaces[p_surface]);
 }
@@ -556,7 +484,7 @@ void MeshStorage::mesh_surface_update_vertex_region(RID p_mesh, int p_surface, i
 	glBufferSubData(GL_ARRAY_BUFFER, p_offset, data_size, r);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-	// GLES2 simplification: espelha na copia CPU (layout sem padding).
+	// GLES2 simplification: mirror into the CPU copy (unpadded layout).
 	Vector<uint8_t> &cpu = mesh->surfaces[p_surface]->vertex_data_cpu;
 	if (p_offset < cpu.size()) {
 		uint64_t copy_size = MIN(data_size, uint64_t(cpu.size() - p_offset));
@@ -593,7 +521,7 @@ void MeshStorage::mesh_surface_update_skin_region(RID p_mesh, int p_surface, int
 	glBufferSubData(GL_ARRAY_BUFFER, p_offset, data_size, r);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-	// GLES2 simplification: espelha na copia CPU.
+	// GLES2 simplification: mirror into the CPU copy.
 	Vector<uint8_t> &cpu = mesh->surfaces[p_surface]->skin_data_cpu;
 	if (p_offset < cpu.size()) {
 		uint64_t copy_size = MIN(data_size, uint64_t(cpu.size() - p_offset));
@@ -680,10 +608,8 @@ RenderingServerTypes::SurfaceData MeshStorage::mesh_get_surface(RID p_mesh, int 
 	sd.mesh_to_skeleton_xform = s.mesh_to_skeleton_xform;
 
 	if (mesh->blend_shape_count) {
-		sd.blend_shape_data = Vector<uint8_t>();
-		for (uint32_t i = 0; i < mesh->blend_shape_count; i++) {
-			sd.blend_shape_data.append_array(Utilities::buffer_get_data(GL_ARRAY_BUFFER, s.blend_shapes[i].vertex_buffer, s.vertex_buffer_size));
-		}
+		// Served from the retained CPU copy (no GPU blend-shape buffers exist).
+		sd.blend_shape_data = s.blend_shape_data_cpu;
 	}
 
 	sd.uv_scale = s.uv_scale;
@@ -1233,14 +1159,7 @@ void MeshStorage::_mesh_instance_add_surface(MeshInstance *mi, Mesh *mesh, uint3
 		glGenBuffers(1, &s.vertex_buffers[0]);
 		glBindBuffer(GL_ARRAY_BUFFER, s.vertex_buffers[0]);
 		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s.vertex_buffers[0], buffer_size, nullptr, GL_DYNAMIC_DRAW, "MeshInstance vertex buffer");
-		if (mesh->blend_shape_count > 0) {
-			// Ping-Pong buffers for processing blendshapes.
-			glGenBuffers(2, s.blend_shape_vertex_buffers);
-			for (uint32_t i = 0; i < 2; i++) {
-				glBindBuffer(GL_ARRAY_BUFFER, s.blend_shape_vertex_buffers[i]);
-				GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_ARRAY_BUFFER, s.blend_shape_vertex_buffers[i], buffer_size, nullptr, GL_DYNAMIC_DRAW, "MeshInstance process buffer[" + itos(i) + "]");
-			}
-		}
+		// No ping-pong blend-shape buffers: blending runs on the CPU.
 		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
 	}
 
@@ -1257,13 +1176,6 @@ void MeshStorage::_mesh_instance_remove_surface(MeshInstance *mi, int p_surface)
 			surface.versions[j].vertex_array = 0;
 		}
 		memfree(surface.versions);
-	}
-
-	if (surface.blend_shape_vertex_buffers[0] != 0) {
-		GLES2::Utilities::get_singleton()->buffer_free_data(surface.blend_shape_vertex_buffers[0]);
-		GLES2::Utilities::get_singleton()->buffer_free_data(surface.blend_shape_vertex_buffers[1]);
-		surface.blend_shape_vertex_buffers[0] = 0;
-		surface.blend_shape_vertex_buffers[1] = 0;
 	}
 
 	for (int i = 0; i < 2; i++) {
@@ -1307,29 +1219,6 @@ void MeshStorage::mesh_instance_check_for_update(RID p_mesh_instance) {
 void MeshStorage::mesh_instance_set_canvas_item_transform(RID p_mesh_instance, const Transform2D &p_transform) {
 	MeshInstance *mi = mesh_instance_owner.get_or_null(p_mesh_instance);
 	mi->canvas_item_transform_2d = p_transform;
-}
-
-void MeshStorage::_blend_shape_bind_mesh_instance_buffer(MeshInstance *p_mi, uint32_t p_surface) {
-	glBindBuffer(GL_ARRAY_BUFFER, p_mi->surfaces[p_surface].blend_shape_vertex_buffers[0]);
-
-	if ((p_mi->surfaces[p_surface].format_cache & (1ULL << RSE::ARRAY_VERTEX))) {
-		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
-		glVertexAttribPointer(RSE::ARRAY_VERTEX, p_mi->surfaces[p_surface].vertex_size_cache, GL_FLOAT, GL_FALSE, p_mi->surfaces[p_surface].vertex_stride_cache, CAST_INT_TO_UCHAR_PTR(0));
-	} else {
-		glDisableVertexAttribArray(RSE::ARRAY_VERTEX);
-	}
-	if ((p_mi->surfaces[p_surface].format_cache & (1ULL << RSE::ARRAY_NORMAL))) {
-		glEnableVertexAttribArray(RSE::ARRAY_NORMAL);
-		glVertexAttribIPointer(RSE::ARRAY_NORMAL, 2, GL_UNSIGNED_INT, p_mi->surfaces[p_surface].vertex_stride_cache, CAST_INT_TO_UCHAR_PTR(p_mi->surfaces[p_surface].vertex_normal_offset_cache));
-	} else {
-		glDisableVertexAttribArray(RSE::ARRAY_NORMAL);
-	}
-	if ((p_mi->surfaces[p_surface].format_cache & (1ULL << RSE::ARRAY_TANGENT))) {
-		glEnableVertexAttribArray(RSE::ARRAY_TANGENT);
-		glVertexAttribIPointer(RSE::ARRAY_TANGENT, 2, GL_UNSIGNED_INT, p_mi->surfaces[p_surface].vertex_stride_cache, CAST_INT_TO_UCHAR_PTR(p_mi->surfaces[p_surface].vertex_tangent_offset_cache));
-	} else {
-		glDisableVertexAttribArray(RSE::ARRAY_TANGENT);
-	}
 }
 
 // GLES2 simplification: equivalentes CPU das funcoes octaedricas de skeleton.glsl
@@ -1382,11 +1271,11 @@ static Vector2 _sw_tang_to_oct(const Vector4 &p_b) {
 	return oct;
 }
 
-// GLES2 simplification: skinning em CPU (blend shapes + esqueletos 2D/3D),
-// replica a matematica do skeleton.glsl sem transform feedback.
-// Retorna false quando o formato exige o caminho TF legado (atributos comprimidos
-// ou copias CPU ausentes). Buffers de saida usam o mesmo layout do caminho TF
-// (posicoes float + normais/tangentes oct em float), entao o render nao muda.
+// GLES2 simplification: CPU skinning (blend shapes + 2D/3D skeletons),
+// replicating the skeleton.glsl math without transform feedback.
+// Returns false when the format requires the legacy TF path (compressed
+// attributes or missing CPU copies). Output buffers use the same layout as the
+// TF path (float positions + oct normals/tangents as floats), so rendering is unchanged.
 bool MeshStorage::_mesh_instance_process_software(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface, float p_base_weight, bool p_can_use_skeleton, bool p_use_8_weights, bool p_array_is_2d) {
 	Mesh::Surface *s = p_mi->mesh->surfaces[p_surface];
 	MeshInstance::Surface &is = p_mi->surfaces[p_surface];
@@ -1479,7 +1368,7 @@ bool MeshStorage::_mesh_instance_process_software(MeshInstance *p_mi, Skeleton *
 				}
 			}
 			if (p_array_is_2d) {
-				// Replica o normalize() do FINAL_PASS 2D+blend do skeleton.glsl.
+				// Replicates the 2D+blend FINAL_PASS normalize() from skeleton.glsl.
 				pos = pos.normalized();
 			}
 		}
@@ -1592,49 +1481,12 @@ bool MeshStorage::_mesh_instance_process_software(MeshInstance *p_mi, Skeleton *
 	return true;
 }
 
-void MeshStorage::_compute_skeleton(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface) {
-	glBindBuffer(GL_ARRAY_BUFFER, p_mi->mesh->surfaces[p_surface]->skin_buffer);
-
-	bool use_8_weights = p_mi->surfaces[p_surface].format_cache & RSE::ARRAY_FLAG_USE_8_BONE_WEIGHTS;
-	int skin_stride = sizeof(int16_t) * (use_8_weights ? 16 : 8);
-	glEnableVertexAttribArray(RSE::ARRAY_BONES);
-	glVertexAttribIPointer(RSE::ARRAY_BONES, 4, GL_UNSIGNED_SHORT, skin_stride, CAST_INT_TO_UCHAR_PTR(0));
-	if (use_8_weights) {
-		glEnableVertexAttribArray(11);
-		glVertexAttribIPointer(11, 4, GL_UNSIGNED_SHORT, skin_stride, CAST_INT_TO_UCHAR_PTR(4 * sizeof(uint16_t)));
-		glEnableVertexAttribArray(12);
-		glVertexAttribPointer(12, 4, GL_UNSIGNED_SHORT, GL_TRUE, skin_stride, CAST_INT_TO_UCHAR_PTR(8 * sizeof(uint16_t)));
-		glEnableVertexAttribArray(13);
-		glVertexAttribPointer(13, 4, GL_UNSIGNED_SHORT, GL_TRUE, skin_stride, CAST_INT_TO_UCHAR_PTR(12 * sizeof(uint16_t)));
-	} else {
-		glEnableVertexAttribArray(RSE::ARRAY_WEIGHTS);
-		glVertexAttribPointer(RSE::ARRAY_WEIGHTS, 4, GL_UNSIGNED_SHORT, GL_TRUE, skin_stride, CAST_INT_TO_UCHAR_PTR(4 * sizeof(uint16_t)));
-	}
-
-	glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, p_mi->surfaces[p_surface].vertex_buffers[p_mi->surfaces[p_surface].current_vertex_buffer]);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, p_sk->transforms_texture);
-
-	glBeginTransformFeedback(GL_POINTS);
-	glDrawArrays(GL_POINTS, 0, p_mi->mesh->surfaces[p_surface]->vertex_count);
-	glEndTransformFeedback();
-
-	glDisableVertexAttribArray(RSE::ARRAY_BONES);
-	glDisableVertexAttribArray(RSE::ARRAY_WEIGHTS);
-	glDisableVertexAttribArray(RSE::ARRAY_BONES + 2);
-	glDisableVertexAttribArray(RSE::ARRAY_WEIGHTS + 2);
-	glBindVertexArray(0);
-	glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0);
-}
-
 void MeshStorage::update_mesh_instances() {
 	if (dirty_mesh_instance_arrays.first() == nullptr) {
 		return; //nothing to do
 	}
 
-	glEnable(GL_RASTERIZER_DISCARD);
-	glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);
-	// Process skeletons and blend shapes using transform feedback
+	// Blend shapes and skeletons are processed on the CPU; no GL state needed.
 	while (dirty_mesh_instance_arrays.first()) {
 		MeshInstance *mi = dirty_mesh_instance_arrays.first()->self();
 
@@ -1683,164 +1535,15 @@ void MeshStorage::update_mesh_instances() {
 				continue;
 			}
 
-		bool array_is_2d = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_2D_VERTICES;
-		bool can_use_skeleton = sk != nullptr && sk->use_2d == array_is_2d && (mi->surfaces[i].format_cache & RSE::ARRAY_FORMAT_BONES);
-		bool use_8_weights = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_8_BONE_WEIGHTS;
+			bool array_is_2d = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_2D_VERTICES;
+			bool can_use_skeleton = sk != nullptr && sk->use_2d == array_is_2d && (mi->surfaces[i].format_cache & RSE::ARRAY_FORMAT_BONES);
+			bool use_8_weights = mi->surfaces[i].format_cache & RSE::ARRAY_FLAG_USE_8_BONE_WEIGHTS;
 
-		// GLES2 simplification: skinning em CPU, sem transform feedback.
-		if (GLES2::Config::get_singleton()->use_skeleton_software && (mi->mesh->blend_shape_count > 0 || can_use_skeleton)) {
-			if (_mesh_instance_process_software(mi, sk, i, base_weight, can_use_skeleton, use_8_weights, array_is_2d)) {
-				continue;
-			}
-			// Formato nao suportado em CPU (ex. atributos comprimidos): usa TF legado.
-		}
-
-		// Always process blend shapes first.
-			if (mi->mesh->blend_shape_count) {
-				SkeletonShaderGLES2::ShaderVariant variant = SkeletonShaderGLES2::MODE_BASE_PASS;
-				uint64_t specialization = 0;
-				specialization |= array_is_2d ? SkeletonShaderGLES2::MODE_2D : 0;
-				specialization |= SkeletonShaderGLES2::USE_BLEND_SHAPES;
-				if (!array_is_2d) {
-					if ((mi->surfaces[i].format_cache & (1ULL << RSE::ARRAY_NORMAL))) {
-						specialization |= SkeletonShaderGLES2::USE_NORMAL;
-					}
-					if ((mi->surfaces[i].format_cache & (1ULL << RSE::ARRAY_TANGENT))) {
-						specialization |= SkeletonShaderGLES2::USE_TANGENT;
-					}
-				}
-
-				bool success = skeleton_shader.shader.version_bind_shader(skeleton_shader.shader_version, variant, specialization);
-				if (!success) {
-					continue;
-				}
-
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::BLEND_WEIGHT, base_weight, skeleton_shader.shader_version, variant, specialization);
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::BLEND_SHAPE_COUNT, float(mi->mesh->blend_shape_count), skeleton_shader.shader_version, variant, specialization);
-
-				glBindBuffer(GL_ARRAY_BUFFER, 0);
-				GLuint vertex_array_gl = 0;
-				uint64_t mask = RSE::ARRAY_FORMAT_VERTEX | RSE::ARRAY_FORMAT_NORMAL | RSE::ARRAY_FORMAT_VERTEX;
-				uint64_t format = mi->mesh->surfaces[i]->format & mask; // Format should only have vertex, normal, tangent (as necessary).
-				mesh_surface_get_vertex_arrays_and_format(mi->mesh->surfaces[i], format, false, vertex_array_gl);
-				glBindVertexArray(vertex_array_gl);
-				glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mi->surfaces[i].blend_shape_vertex_buffers[0]);
-				glBeginTransformFeedback(GL_POINTS);
-				glDrawArrays(GL_POINTS, 0, mi->mesh->surfaces[i]->vertex_count);
-				glEndTransformFeedback();
-
-				variant = SkeletonShaderGLES2::MODE_BLEND_PASS;
-				success = skeleton_shader.shader.version_bind_shader(skeleton_shader.shader_version, variant, specialization);
-				if (!success) {
-					continue;
-				}
-
-				//Do the last blend shape separately, as it can be combined with the skeleton pass.
-				for (uint32_t bs = 0; bs < mi->mesh->blend_shape_count - 1; bs++) {
-					float weight = mi->blend_weights[bs];
-
-					if (Math::is_zero_approx(weight)) {
-						//not bother with this one
-						continue;
-					}
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::BLEND_WEIGHT, weight, skeleton_shader.shader_version, variant, specialization);
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::BLEND_SHAPE_COUNT, float(mi->mesh->blend_shape_count), skeleton_shader.shader_version, variant, specialization);
-
-					// Ensure the skeleton shader outputs to the correct (current) VBO.
-
-					glBindVertexArray(mi->mesh->surfaces[i]->blend_shapes[bs].vertex_array);
-					_blend_shape_bind_mesh_instance_buffer(mi, i);
-					glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mi->surfaces[i].blend_shape_vertex_buffers[1]);
-
-					glBeginTransformFeedback(GL_POINTS);
-					glDrawArrays(GL_POINTS, 0, mi->mesh->surfaces[i]->vertex_count);
-					glEndTransformFeedback();
-
-					SWAP(mi->surfaces[i].blend_shape_vertex_buffers[0], mi->surfaces[i].blend_shape_vertex_buffers[1]);
-				}
-				uint32_t bs = mi->mesh->blend_shape_count - 1;
-
-				float weight = mi->blend_weights[bs];
-
-				glBindVertexArray(mi->mesh->surfaces[i]->blend_shapes[bs].vertex_array);
-				_blend_shape_bind_mesh_instance_buffer(mi, i);
-
-				specialization |= can_use_skeleton ? SkeletonShaderGLES2::USE_SKELETON : 0;
-				specialization |= (can_use_skeleton && use_8_weights) ? SkeletonShaderGLES2::USE_EIGHT_WEIGHTS : 0;
-				specialization |= SkeletonShaderGLES2::FINAL_PASS;
-				success = skeleton_shader.shader.version_bind_shader(skeleton_shader.shader_version, variant, specialization);
-				if (!success) {
-					continue;
-				}
-
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::BLEND_WEIGHT, weight, skeleton_shader.shader_version, variant, specialization);
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::BLEND_SHAPE_COUNT, float(mi->mesh->blend_shape_count), skeleton_shader.shader_version, variant, specialization);
-
-				if (can_use_skeleton) {
-					Transform2D transform = mi->canvas_item_transform_2d.affine_inverse() * sk->base_transform_2d;
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::SKELETON_TRANSFORM_X, transform[0], skeleton_shader.shader_version, variant, specialization);
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::SKELETON_TRANSFORM_Y, transform[1], skeleton_shader.shader_version, variant, specialization);
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::SKELETON_TRANSFORM_OFFSET, transform[2], skeleton_shader.shader_version, variant, specialization);
-
-					Transform2D inverse_transform = transform.affine_inverse();
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::INVERSE_TRANSFORM_X, inverse_transform[0], skeleton_shader.shader_version, variant, specialization);
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::INVERSE_TRANSFORM_Y, inverse_transform[1], skeleton_shader.shader_version, variant, specialization);
-					skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::INVERSE_TRANSFORM_OFFSET, inverse_transform[2], skeleton_shader.shader_version, variant, specialization);
-
-					// Do last blendshape in the same pass as the Skeleton.
-					_compute_skeleton(mi, sk, i);
-					can_use_skeleton = false;
-				} else {
-					// Do last blendshape by itself and prepare vertex data for use by the renderer.
-					glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, mi->surfaces[i].vertex_buffers[mi->surfaces[i].current_vertex_buffer]);
-
-					glBeginTransformFeedback(GL_POINTS);
-					glDrawArrays(GL_POINTS, 0, mi->mesh->surfaces[i]->vertex_count);
-					glEndTransformFeedback();
-				}
-
-				glBindVertexArray(0);
-				glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0);
-			}
-
-			// This branch should only execute when Skeleton is run by itself.
-			if (can_use_skeleton) {
-				SkeletonShaderGLES2::ShaderVariant variant = SkeletonShaderGLES2::MODE_BASE_PASS;
-				uint64_t specialization = 0;
-				specialization |= array_is_2d ? SkeletonShaderGLES2::MODE_2D : 0;
-				specialization |= SkeletonShaderGLES2::USE_SKELETON;
-				specialization |= SkeletonShaderGLES2::FINAL_PASS;
-				specialization |= use_8_weights ? SkeletonShaderGLES2::USE_EIGHT_WEIGHTS : 0;
-				if (!array_is_2d) {
-					if ((mi->surfaces[i].format_cache & (1ULL << RSE::ARRAY_NORMAL))) {
-						specialization |= SkeletonShaderGLES2::USE_NORMAL;
-					}
-					if ((mi->surfaces[i].format_cache & (1ULL << RSE::ARRAY_TANGENT))) {
-						specialization |= SkeletonShaderGLES2::USE_TANGENT;
-					}
-				}
-
-				bool success = skeleton_shader.shader.version_bind_shader(skeleton_shader.shader_version, variant, specialization);
-				if (!success) {
-					continue;
-				}
-
-				Transform2D transform = mi->canvas_item_transform_2d.affine_inverse() * sk->base_transform_2d;
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::SKELETON_TRANSFORM_X, transform[0], skeleton_shader.shader_version, variant, specialization);
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::SKELETON_TRANSFORM_Y, transform[1], skeleton_shader.shader_version, variant, specialization);
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::SKELETON_TRANSFORM_OFFSET, transform[2], skeleton_shader.shader_version, variant, specialization);
-
-				Transform2D inverse_transform = transform.affine_inverse();
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::INVERSE_TRANSFORM_X, inverse_transform[0], skeleton_shader.shader_version, variant, specialization);
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::INVERSE_TRANSFORM_Y, inverse_transform[1], skeleton_shader.shader_version, variant, specialization);
-				skeleton_shader.shader.version_set_uniform(SkeletonShaderGLES2::INVERSE_TRANSFORM_OFFSET, inverse_transform[2], skeleton_shader.shader_version, variant, specialization);
-
-				GLuint vertex_array_gl = 0;
-				uint64_t mask = RSE::ARRAY_FORMAT_VERTEX | RSE::ARRAY_FORMAT_NORMAL | RSE::ARRAY_FORMAT_VERTEX;
-				uint64_t format = mi->mesh->surfaces[i]->format & mask; // Format should only have vertex, normal, tangent (as necessary).
-				mesh_surface_get_vertex_arrays_and_format(mi->mesh->surfaces[i], format, false, vertex_array_gl);
-				glBindVertexArray(vertex_array_gl);
-				_compute_skeleton(mi, sk, i);
+			// GLES2 simplification: CPU skinning only; transform feedback is gone.
+			// Surfaces that software processing rejects (e.g. compressed attributes
+			// with skinning/blend shapes) are left unprocessed and warned about once.
+			if ((mi->mesh->blend_shape_count > 0 || can_use_skeleton) && !_mesh_instance_process_software(mi, sk, i, base_weight, can_use_skeleton, use_8_weights, array_is_2d)) {
+				WARN_PRINT_ONCE_ED("GLES2 driver requires uncompressed vertices for skinned/blend-shape meshes.");
 			}
 		}
 		mi->dirty = false;
@@ -1849,9 +1552,6 @@ void MeshStorage::update_mesh_instances() {
 		}
 		dirty_mesh_instance_arrays.remove(&mi->array_update_list);
 	}
-	glDisable(GL_RASTERIZER_DISCARD);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
 }
 
 /* MULTIMESH API */
@@ -2669,28 +2369,18 @@ void MeshStorage::skeleton_allocate_data(RID p_skeleton, int p_bones, bool p_2d_
 
 	skeleton->size = p_bones;
 	skeleton->use_2d = p_2d_skeleton;
-	skeleton->height = (p_bones * (p_2d_skeleton ? 2 : 3)) / 256;
+
+	// No transforms texture: bone matrices live only in skeleton->data for CPU skinning.
+	// Keep the historical 256-wide row layout so bone indexing is unchanged.
+	int rows = (p_bones * (p_2d_skeleton ? 2 : 3)) / 256;
 	if ((p_bones * (p_2d_skeleton ? 2 : 3)) % 256) {
-		skeleton->height++;
+		rows++;
 	}
 
-	if (skeleton->transforms_texture != 0) {
-		GLES2::Utilities::get_singleton()->texture_free_data(skeleton->transforms_texture);
-		skeleton->transforms_texture = 0;
-		skeleton->data.clear();
-	}
+	skeleton->data.clear();
 
 	if (skeleton->size) {
-		skeleton->data.resize(256 * skeleton->height * 4);
-		glGenTextures(1, &skeleton->transforms_texture);
-		glBindTexture(GL_TEXTURE_2D, skeleton->transforms_texture);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, skeleton->height, 0, GL_RGBA, GL_FLOAT, nullptr);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glBindTexture(GL_TEXTURE_2D, 0);
-		GLES2::Utilities::get_singleton()->texture_allocated_data(skeleton->transforms_texture, skeleton->data.size() * sizeof(float), "Skeleton transforms texture");
+		skeleton->data.resize(256 * rows * 4);
 
 		memset(skeleton->data.ptr(), 0, skeleton->data.size() * sizeof(float));
 
@@ -2813,11 +2503,7 @@ void MeshStorage::_update_dirty_skeletons() {
 	while (skeleton_dirty_list) {
 		Skeleton *skeleton = skeleton_dirty_list;
 
-		if (skeleton->size) {
-			glBindTexture(GL_TEXTURE_2D, skeleton->transforms_texture);
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, 256, skeleton->height, 0, GL_RGBA, GL_FLOAT, skeleton->data.ptr());
-			glBindTexture(GL_TEXTURE_2D, 0);
-		}
+		// No texture upload: CPU skinning reads skeleton->data directly.
 
 		skeleton_dirty_list = skeleton->dirty_list;
 

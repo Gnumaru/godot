@@ -35,7 +35,6 @@
 #include "core/templates/local_vector.h"
 #include "core/templates/rid_owner.h"
 #include "core/templates/self_list.h"
-#include "drivers/gles2/shaders/skeleton.glsl.gen.h"
 #include "servers/rendering/renderer_compositor.h"
 #include "servers/rendering/rendering_server_enums.h"
 #include "servers/rendering/rendering_server_globals.h"
@@ -111,25 +110,17 @@ struct Mesh {
 
 		Vector<AABB> bone_aabbs;
 
-		// GLES2 simplification: copias CPU retidas para skinning em software
-		// (sem transform feedback). Layout identico ao enviado (sem padding).
+		// GLES2 simplification: CPU copies retained for software skinning
+		// (no transform feedback). Same layout as uploaded (no padding).
 		Vector<uint8_t> vertex_data_cpu;
 		Vector<uint8_t> skin_data_cpu;
-		Vector<uint8_t> blend_shape_data_cpu; // todas as blend shapes concatenadas.
+		Vector<uint8_t> blend_shape_data_cpu; // all blend shapes concatenated.
 
 		// Transform used in runtime bone AABBs compute.
 		// As bone AABBs are saved in Mesh space, but bones animation is in Skeleton space.
 		Transform3D mesh_to_skeleton_xform;
 
 		Vector4 uv_scale;
-
-		struct BlendShape {
-			GLuint vertex_buffer = 0;
-			GLuint vertex_array = 0;
-		};
-
-		BlendShape *blend_shapes = nullptr;
-		GLuint skeleton_vertex_array = 0;
 
 		RID material;
 	};
@@ -164,7 +155,6 @@ struct MeshInstance {
 	Mesh *mesh = nullptr;
 	RID skeleton;
 	struct Surface {
-		GLuint blend_shape_vertex_buffers[2] = { 0, 0 };
 		GLuint vertex_arrays[2] = { 0, 0 };
 		GLuint vertex_buffers[2] = { 0, 0 };
 		int vertex_stride_cache = 0;
@@ -232,14 +222,13 @@ struct MultiMesh {
 struct Skeleton {
 	bool use_2d = false;
 	int size = 0;
-	int height = 0;
+	// Bone matrices, CPU-side only (no transforms texture: skinning runs on the CPU).
+	// Keeps the historical 256-wide row layout: 12 floats per 3D bone, 8 per 2D bone.
 	LocalVector<float> data;
 
 	bool dirty = false;
 	Skeleton *dirty_list = nullptr;
 	Transform2D base_transform_2d;
-
-	GLuint transforms_texture = 0;
 
 	uint64_t version = 1;
 
@@ -249,11 +238,6 @@ struct Skeleton {
 class MeshStorage : public RendererMeshStorage {
 private:
 	static MeshStorage *singleton;
-
-	struct {
-		SkeletonShaderGLES2 shader;
-		RID shader_version;
-	} skeleton_shader;
 
 	/* Mesh */
 
@@ -269,7 +253,6 @@ private:
 	void _mesh_instance_clear(MeshInstance *mi);
 	void _mesh_instance_add_surface(MeshInstance *mi, Mesh *mesh, uint32_t p_surface);
 	void _mesh_instance_remove_surface(MeshInstance *mi, int p_surface);
-	void _blend_shape_bind_mesh_instance_buffer(MeshInstance *p_mi, uint32_t p_surface);
 	SelfList<MeshInstance>::List dirty_mesh_instance_weights;
 	SelfList<MeshInstance>::List dirty_mesh_instance_arrays;
 
@@ -289,9 +272,8 @@ private:
 	mutable RID_Owner<Skeleton, true> skeleton_owner;
 
 	_FORCE_INLINE_ void _skeleton_make_dirty(Skeleton *skeleton);
-	void _compute_skeleton(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface);
-	// GLES2 simplification: skinning em CPU (blend shapes + ossos), sem transform feedback.
-	// Retorna false se o formato exige o caminho TF (atributos comprimidos).
+	// GLES2 simplification: CPU skinning (blend shapes + bones), no transform feedback.
+	// Returns false for unsupported formats (e.g. compressed attributes with skinning).
 	bool _mesh_instance_process_software(MeshInstance *p_mi, Skeleton *p_sk, uint32_t p_surface, float p_base_weight, bool p_can_use_skeleton, bool p_use_8_weights, bool p_array_is_2d);
 
 	Skeleton *skeleton_dirty_list = nullptr;

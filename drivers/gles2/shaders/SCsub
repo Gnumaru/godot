@@ -24,7 +24,7 @@ if "GLES2_GLSL" in env["BUILDERS"]:
     env.GLES2_GLSL("canvas_sdf.glsl")
     env.GLES2_GLSL("particles.glsl")
     env.GLES2_GLSL("particles_copy.glsl")
-    env.GLES2_GLSL("skeleton.glsl")
+    # No skeleton.glsl: skinning runs on the CPU, the TF shader is gone.
     env.GLES2_GLSL("tex_blit.glsl")
 
     # once we finish conversion we can introduce this to cover all files:
