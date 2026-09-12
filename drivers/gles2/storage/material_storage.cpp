@@ -3473,8 +3473,6 @@ void SceneMaterialData::bind_material_uniforms(SceneShaderGLES2 &p_shader, RID p
 /* Particles SHADER */
 
 void ParticlesShaderData::set_code(const String &p_code) {
-	// Initialize and compile the shader.
-
 	code = p_code;
 	valid = false;
 	uniforms.clear();
@@ -3486,63 +3484,11 @@ void ParticlesShaderData::set_code(const String &p_code) {
 		return; // Just invalid, but no error.
 	}
 
-	ShaderCompiler::GeneratedCode gen_code;
-
-	ShaderCompiler::IdentifierActions actions;
-	actions.entry_point_stages["start"] = ShaderCompiler::STAGE_VERTEX;
-	actions.entry_point_stages["process"] = ShaderCompiler::STAGE_VERTEX;
-
-	actions.usage_flag_pointers["COLLIDED"] = &uses_collision;
-
-	userdata_count = 0;
-	for (uint32_t i = 0; i < PARTICLES_MAX_USERDATAS; i++) {
-		userdatas_used[i] = false;
-		actions.usage_flag_pointers["USERDATA" + itos(i + 1)] = &userdatas_used[i];
-	}
-
-	actions.uniforms = &uniforms;
-
-	Error err = MaterialStorage::get_singleton()->shaders.compiler_particles.compile(RSE::SHADER_PARTICLES, code, &actions, path, gen_code);
-	ERR_FAIL_COND_MSG(err != OK, "Shader compilation failed.");
-
-	if (version.is_null()) {
-		version = MaterialStorage::get_singleton()->shaders.particles_process_shader.version_create();
-	}
-
-	for (uint32_t i = 0; i < PARTICLES_MAX_USERDATAS; i++) {
-		if (userdatas_used[i]) {
-			userdata_count++;
-		}
-	}
-
-	LocalVector<ShaderGLES2::TextureUniformData> texture_uniform_data = get_texture_uniform_data_GLES2(gen_code.texture_uniforms);
-
-	Vector<String> particles_defines = gen_code.defines;
-	{
-		// Plain global table for user process code (the template UBO is gone).
-		// The process shader object carries no engine defines, so provide the
-		// table size here.
-		particles_defines.push_back("#define MAX_GLOBAL_SHADER_UNIFORMS 256\n");
-		bool uses_global_table = false;
-		for (const KeyValue<String, String> &E : gen_code.code) {
-			if (E.value.contains("global_shader_uniforms[")) {
-				uses_global_table = true;
-				break;
-			}
-		}
-		if (uses_global_table) {
-			particles_defines.push_back("#define PARTICLES_GLOBALS_USED\n");
-		}
-	}
-
-	MaterialStorage::get_singleton()->shaders.particles_process_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], particles_defines, texture_uniform_data);
-	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.particles_process_shader.version_is_valid(version));
-
-	// GLES2 simplification: material uniforms upload as plain variables (no UBO);
-	// the process pass itself is CPU-stubbed (see ParticlesStorage::update_particles).
-	texture_uniforms = gen_code.texture_uniforms;
-
-	valid = true;
+	// GLES2 simplification (low-end 3D): GPU particles are not supported (same as
+	// Godot 3 GLES2); the process shader object is never initialized and the
+	// update pass is CPU-stubbed. Warn once instead of failing version_create.
+	WARN_PRINT_ONCE("ParticleProcessMaterial (GPU particles) is not supported by the opengl2 renderer; nothing will be rendered. Use CPUParticles instead.");
+	return;
 }
 
 bool ParticlesShaderData::is_animated() const {
@@ -3554,6 +3500,10 @@ bool ParticlesShaderData::casts_shadows() const {
 }
 
 RenderingServerTypes::ShaderNativeSourceCode ParticlesShaderData::get_native_source_code() const {
+	// GLES2 simplification: GPU particles unsupported, version stays null.
+	if (version.is_null()) {
+		return RenderingServerTypes::ShaderNativeSourceCode();
+	}
 	return MaterialStorage::get_singleton()->shaders.particles_process_shader.version_get_native_source_code(version);
 }
 
