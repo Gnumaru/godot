@@ -160,6 +160,11 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 	if (RasterizerUtilGLES2::is_gles_over_gl()) {
 		builder.append("#version 330\n");
 		builder.append("#define USE_GLES_OVER_GL\n");
+	} else if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: real ES 2.0 context (WebGL1-class). Templates
+		// are ported separately; unported 300-es syntax fails here as expected.
+		builder.append("#version 100\n");
+		builder.append("precision highp float;\nprecision highp int;\n");
 	} else {
 		builder.append("#version 300 es\n");
 	}

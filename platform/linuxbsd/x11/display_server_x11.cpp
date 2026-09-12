@@ -83,6 +83,7 @@
 #endif
 #ifdef GLES2_ENABLED
 #include "drivers/gles2/rasterizer_gles2.h"
+#include "drivers/gles2/rasterizer_util_gles2.h"
 #endif
 #endif
 
@@ -7248,6 +7249,13 @@ DisplayServerX11::DisplayServerX11(const String &p_rendering_driver, DisplayServ
 
 	if (rendering_driver == "opengl3_es" || rendering_driver == "opengl2_es") {
 		gl_manager_egl = memnew(GLManagerEGL_X11);
+		if (rendering_driver == "opengl2_es") {
+			// GLES2 simplification: real ES 2.0 context (low-end/WebGL1-class).
+			// The flag follows what we request: some EGL implementations report
+			// higher version strings while still enforcing per-shader rules.
+			gl_manager_egl->set_context_client_version(2);
+			RasterizerUtilGLES2::set_gl_es_version(2);
+		}
 		if (gl_manager_egl->initialize() != OK || gl_manager_egl->open_display(x11_display) != OK) {
 			memdelete(gl_manager_egl);
 			gl_manager_egl = nullptr;

@@ -37,6 +37,7 @@
 class RasterizerUtilGLES2 {
 private:
 	static bool gles_over_gl;
+	static int gl_es_version; // 0 = desktop GL, 2/3 = GLES major version.
 
 public:
 	static void set_gles_over_gl(bool p_gles_over_gl) {
@@ -44,6 +45,12 @@ public:
 	}
 	static bool is_gles_over_gl() {
 		return gles_over_gl;
+	}
+	static void set_gl_es_version(int p_version) {
+		gl_es_version = p_version;
+	}
+	static bool is_gles2() {
+		return gl_es_version == 2;
 	}
 
 	static void clear_depth(float p_depth);

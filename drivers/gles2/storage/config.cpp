@@ -49,10 +49,28 @@ using namespace GLES2;
 
 #define _GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
 
-Config *Config::singleton = nullptr;
+	Config *Config::singleton = nullptr;
 
 Config::Config() {
 	singleton = this;
+
+	// GLES2 simplification: detect a real ES 2.0 context (opengl2_es) up front,
+	// as several queries below are ES3-only. Only upgrades to ES2 here; the
+	// display layer sets the requested version (version strings may lie).
+	int es_version = 0;
+	{
+		const char *gl_version = (const char *)glGetString(GL_VERSION);
+		String version_string = gl_version ? String(gl_version) : String();
+		if (version_string.begins_with("OpenGL ES 2.")) {
+			es_version = 2;
+		} else if (version_string.begins_with("OpenGL ES ")) {
+			es_version = 3;
+		}
+		if (es_version == 2) {
+			RasterizerUtilGLES2::set_gl_es_version(es_version);
+		}
+		print_verbose(String("GLES2: GL_VERSION='") + version_string + "' ES2 target=" + (RasterizerUtilGLES2::is_gles2() ? "yes" : "no"));
+	}
 
 #ifdef WEB_ENABLED
 	// Starting with Emscripten 3.1.51, glGetStringi(GL_EXTENSIONS, i) will only ever return
@@ -71,7 +89,16 @@ Config::Config() {
 		free(extension_array_string);
 	}
 #else
-	{
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: glGetStringi/GL_NUM_EXTENSIONS are ES3-only.
+		const char *extension_string = (const char *)glGetString(GL_EXTENSIONS);
+		if (extension_string) {
+			PackedStringArray extension_array = String(extension_string).split(" ");
+			for (const String &s : extension_array) {
+				extensions.insert(s);
+			}
+		}
+	} else {
 		GLint max_extensions = 0;
 		glGetIntegerv(GL_NUM_EXTENSIONS, &max_extensions);
 		for (int i = 0; i < max_extensions; i++) {
@@ -120,12 +147,19 @@ Config::Config() {
 	glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
 	glGetIntegerv(GL_MAX_VIEWPORT_DIMS, max_viewport_size);
 	glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attribs);
-	glGetInteger64v(GL_MAX_UNIFORM_BLOCK_SIZE, &max_uniform_buffer_size);
-	GLint max_vertex_output;
-	glGetIntegerv(GL_MAX_VERTEX_OUTPUT_COMPONENTS, &max_vertex_output);
-	GLint max_fragment_input;
-	glGetIntegerv(GL_MAX_FRAGMENT_INPUT_COMPONENTS, &max_fragment_input);
-	max_shader_varyings = (uint32_t)MIN(max_vertex_output, max_fragment_input) / 4;
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: uniform/varying queries below are ES3-only.
+		GLint max_varyings = 0;
+		glGetIntegerv(GL_MAX_VARYING_VECTORS, &max_varyings);
+		max_shader_varyings = (uint32_t)MAX(max_varyings, 0);
+	} else {
+		glGetInteger64v(GL_MAX_UNIFORM_BLOCK_SIZE, &max_uniform_buffer_size);
+		GLint max_vertex_output;
+		glGetIntegerv(GL_MAX_VERTEX_OUTPUT_COMPONENTS, &max_vertex_output);
+		GLint max_fragment_input;
+		glGetIntegerv(GL_MAX_FRAGMENT_INPUT_COMPONENTS, &max_fragment_input);
+		max_shader_varyings = (uint32_t)MIN(max_vertex_output, max_fragment_input) / 4;
+	}
 
 	// sanity clamp buffer size to 16K..1MB
 	max_uniform_buffer_size = CLAMP(max_uniform_buffer_size, 16384, 1048576);

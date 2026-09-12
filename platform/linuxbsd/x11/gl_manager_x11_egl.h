@@ -37,6 +37,7 @@
 
 class GLManagerEGL_X11 : public EGLManager {
 private:
+	int context_client_version = 3;
 	virtual const char *_get_platform_extension_name() const override;
 	virtual EGLenum _get_platform_extension_enum() const override;
 	virtual EGLenum _get_platform_api_enum() const override;
@@ -45,6 +46,11 @@ private:
 
 public:
 	void window_resize(DisplayServerEnums::WindowID p_window_id, int p_width, int p_height) {}
+
+	// GLES2 simplification: ES 2.0 context for opengl2_es (real GLES2).
+	void set_context_client_version(int p_version) {
+		context_client_version = p_version;
+	}
 
 	GLManagerEGL_X11() {}
 	~GLManagerEGL_X11() {}

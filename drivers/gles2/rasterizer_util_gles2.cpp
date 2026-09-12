@@ -33,6 +33,7 @@
 #include <platform_gl.h>
 
 bool RasterizerUtilGLES2::gles_over_gl = true;
+int RasterizerUtilGLES2::gl_es_version = 3;
 
 void RasterizerUtilGLES2::clear_depth(float p_depth) {
 #ifdef GL_API_ENABLED

@@ -50,8 +50,10 @@ EGLenum GLManagerEGL_X11::_get_platform_api_enum() const {
 
 Vector<EGLint> GLManagerEGL_X11::_get_platform_context_attribs() const {
 	Vector<EGLint> ret;
+	// GLES2 simplification: legacy CLIENT_VERSION only; MAJOR/MINOR confused
+	// some EGL implementations (3.2 context for a 2.0 request).
 	ret.push_back(EGL_CONTEXT_CLIENT_VERSION);
-	ret.push_back(3);
+	ret.push_back(context_client_version);
 	ret.push_back(EGL_NONE);
 
 	return ret;
