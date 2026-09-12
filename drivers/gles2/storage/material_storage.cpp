@@ -2104,6 +2104,15 @@ void MaterialStorage::global_shader_parameters_upload_as_uniforms(GLint p_locati
 	glUniform4fv(p_location, count, (const GLfloat *)global_shader_uniforms.buffer_values);
 }
 
+uint32_t MaterialStorage::global_shader_uniform_get_index(const StringName &p_name) const {
+	const GlobalShaderUniforms::Variable *gv = global_shader_uniforms.variables.getptr(p_name);
+	if (gv) {
+		return gv->buffer_index;
+	}
+	WARN_PRINT("Shader uses global parameter '" + p_name + "', but it was removed at some point. Material will not display correctly.");
+	return 0;
+}
+
 int32_t MaterialStorage::global_shader_parameters_instance_allocate(RID p_instance) {
 	ERR_FAIL_COND_V(global_shader_uniforms.instance_buffer_pos.has(p_instance), -1);
 	int32_t pos = _global_shader_uniform_allocate(ShaderLanguage::MAX_INSTANCE_UNIFORM_INDICES);
@@ -2884,8 +2893,52 @@ void CanvasMaterialData::bind_uniforms() {
 	bind_uniforms_generic(texture_cache, shader_data->texture_uniforms, 1, filter_from_uniform_canvas, repeat_from_uniform_canvas); // Start at GL_TEXTURE1 because texture slot 0 is used by the base texture
 }
 
-// GLES2 simplification: upload de uniforms de material como variaveis comuns
-// (sem UBO), por draw, no padrao do gles2 do Godot 3.
+// GLES2 simplification: material uniforms as plain variables (no UBO).
+// Prefixes every generated declaration with "uniform " (global indices included).
+static String _material_uniforms_to_plain(const String &p_uniforms) {
+	String out;
+	Vector<String> lines = p_uniforms.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		String line = lines[i].strip_edges();
+		if (line.is_empty()) {
+			continue;
+		}
+		if (!line.begins_with("uniform ") && !line.begins_with("layout ")) {
+			out += "uniform " + line + "\n";
+		} else {
+			out += line + "\n";
+		}
+	}
+	return out;
+}
+
+// GLES2 simplification: merges material parameters over shader defaults into
+// plain values for per-draw upload (no UBO). Skips textures, instance uniforms
+// (separate paths) and globals (resolved per bind from the global table).
+static void _merge_plain_uniform_values(HashMap<StringName, Variant> &r_values, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, const HashMap<StringName, Variant> &p_parameters) {
+	r_values.clear();
+	for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : p_uniforms) {
+		if (E.value.is_texture()) {
+			continue;
+		}
+		if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_INSTANCE) {
+			continue;
+		}
+		HashMap<StringName, Variant>::ConstIterator V = p_parameters.find(E.key);
+		if (V) {
+			r_values[E.key] = V->value;
+		} else if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
+			continue;
+		} else if (E.value.default_value.size()) {
+			r_values[E.key] = ShaderLanguage::constant_value_to_variant(E.value.default_value, E.value.type, E.value.array_size, E.value.hint);
+		} else if ((E.value.type == ShaderLanguage::TYPE_VEC3 || E.value.type == ShaderLanguage::TYPE_VEC4) && E.value.hint == ShaderLanguage::ShaderNode::Uniform::HINT_COLOR_CONVERSION_DISABLED) {
+			r_values[E.key] = Color(0, 0, 0, 1);
+		} else {
+			r_values[E.key] = ShaderLanguage::get_default_datatype_value(E.value.type, E.value.array_size, E.value.hint);
+		}
+	}
+}
+
 static void _set_plain_uniform(GLint p_location, ShaderLanguage::DataType p_type, int p_array_size, const Variant &p_value) {
 	if (p_location < 0) {
 		return;
@@ -3136,20 +3189,19 @@ static void _set_plain_uniform(GLint p_location, ShaderLanguage::DataType p_type
 	}
 }
 
-void CanvasMaterialData::bind_material_uniforms(CanvasShaderGLES2 &p_shader, RID p_version, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
-	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+// Shared per-draw upload for canvas/spatial/sky material uniforms as plain
+// variables (no UBO). Skips textures (texture cache path), instance uniforms
+// (instance buffer path) and resolves globals from the global table.
+static void _bind_plain_material_uniforms(GLuint p_program, HashMap<StringName, GLint> &r_locations, GLuint &r_locations_program, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, const HashMap<StringName, Variant> &p_uniform_values) {
+	if (p_program == 0) {
 		return;
 	}
-	GLuint program = p_shader.version_get_program(p_version, p_variant, p_specialization);
-	if (program == 0) {
-		return;
-	}
-	if (uniform_locations_program != program) {
-		uniform_locations.clear();
-		uniform_locations_program = program;
+	if (r_locations_program != p_program) {
+		r_locations.clear();
+		r_locations_program = p_program;
 	}
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
-	for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : shader_data->uniforms) {
+	for (const KeyValue<StringName, ShaderLanguage::ShaderNode::Uniform> &E : p_uniforms) {
 		if (E.value.is_texture()) {
 			continue;
 		}
@@ -3157,34 +3209,35 @@ void CanvasMaterialData::bind_material_uniforms(CanvasShaderGLES2 &p_shader, RID
 			continue;
 		}
 		GLint location = -1;
-		HashMap<StringName, GLint>::Iterator L = uniform_locations.find(E.key);
+		HashMap<StringName, GLint>::Iterator L = r_locations.find(E.key);
 		if (L) {
 			location = L->value;
 		} else {
 			CharString cname = String(E.key).utf8();
-			location = glGetUniformLocation(program, cname.get_data());
-			uniform_locations[E.key] = location;
+			location = glGetUniformLocation(p_program, cname.get_data());
+			r_locations[E.key] = location;
 		}
 		if (location < 0) {
 			continue;
 		}
 		if (E.value.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
-			GlobalShaderUniforms::Variable *gv = material_storage->global_shader_uniforms.variables.getptr(E.key);
-			uint32_t index = 0;
-			if (gv) {
-				index = gv->buffer_index;
-			} else {
-				WARN_PRINT("Shader uses global parameter '" + E.key + "', but it was removed at some point. Material will not display correctly.");
-			}
-			glUniform1ui(location, index);
+			glUniform1ui(location, material_storage->global_shader_uniform_get_index(E.key));
 			continue;
 		}
-		HashMap<StringName, Variant>::ConstIterator V = uniform_values.find(E.key);
+		HashMap<StringName, Variant>::ConstIterator V = p_uniform_values.find(E.key);
 		if (!V) {
 			continue;
 		}
 		_set_plain_uniform(location, E.value.type, E.value.array_size, V->value);
 	}
+}
+
+void CanvasMaterialData::bind_material_uniforms(CanvasShaderGLES2 &p_shader, RID p_version, CanvasShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+		return;
+	}
+	GLuint program = p_shader.version_get_program(p_version, p_variant, p_specialization);
+	_bind_plain_material_uniforms(program, uniform_locations, uniform_locations_program, shader_data->uniforms, uniform_values);
 }
 
 CanvasMaterialData::~CanvasMaterialData() {
@@ -3294,7 +3347,7 @@ void SkyShaderData::set_code(const String &p_code) {
 		}
 	}
 
-	MaterialStorage::get_singleton()->shaders.sky_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], sky_defines, texture_uniform_data);
+	MaterialStorage::get_singleton()->shaders.sky_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], sky_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.sky_shader.version_is_valid(version));
 
 	ubo_size = gen_code.uniform_total_size;
@@ -3336,7 +3389,11 @@ GLES2::ShaderData *GLES2::_create_sky_shader_func() {
 
 void SkyMaterialData::update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty) {
 	uniform_set_updated = true;
-	update_parameters_internal(p_parameters, p_uniform_dirty, p_textures_dirty, shader_data->uniforms, shader_data->ubo_offsets.ptr(), shader_data->texture_uniforms, shader_data->default_texture_params, shader_data->ubo_size, true);
+	// GLES2 simplification: no material UBO (plain uniforms); textures unchanged.
+	update_parameters_internal(p_parameters, p_uniform_dirty, p_textures_dirty, shader_data->uniforms, nullptr, shader_data->texture_uniforms, shader_data->default_texture_params, 0, true);
+	_merge_plain_uniform_values(uniform_values, shader_data->uniforms, p_parameters);
+	uniform_locations_program = 0;
+	uniform_locations.clear();
 }
 
 SkyMaterialData::~SkyMaterialData() {
@@ -3349,10 +3406,28 @@ GLES2::MaterialData *GLES2::_create_sky_material_func(ShaderData *p_shader) {
 }
 
 void SkyMaterialData::bind_uniforms() {
-	// Bind Material Uniforms
-	glBindBufferBase(GL_UNIFORM_BUFFER, SKY_MATERIAL_UNIFORM_LOCATION_GLES2, uniform_buffer);
+	// GLES2 simplification: no material UBO (plain uniforms); bind legacy buffer
+	// only if it exists. Textures follow the normal path.
+	if (uniform_buffer != 0) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, SKY_MATERIAL_UNIFORM_LOCATION_GLES2, uniform_buffer);
+	}
 
 	bind_uniforms_generic(texture_cache, shader_data->texture_uniforms);
+}
+
+void SkyMaterialData::bind_material_uniforms(SkyShaderGLES2 &p_shader, RID p_version, SkyShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+		return;
+	}
+	GLuint program = p_shader.version_get_program(p_version, p_variant, p_specialization);
+	bind_material_uniforms(program);
+}
+
+void SkyMaterialData::bind_material_uniforms(GLuint p_program) {
+	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+		return;
+	}
+	_bind_plain_material_uniforms(p_program, uniform_locations, uniform_locations_program, shader_data->uniforms, uniform_values);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3608,7 +3683,7 @@ void SceneShaderData::set_code(const String &p_code) {
 		}
 	}
 
-	MaterialStorage::get_singleton()->shaders.scene_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], scene_defines, texture_uniform_data);
+	MaterialStorage::get_singleton()->shaders.scene_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], scene_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.scene_shader.version_is_valid(version));
 
 	ubo_size = gen_code.uniform_total_size;
@@ -3668,7 +3743,11 @@ void SceneMaterialData::set_next_pass(RID p_pass) {
 }
 
 void SceneMaterialData::update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty) {
-	update_parameters_internal(p_parameters, p_uniform_dirty, p_textures_dirty, shader_data->uniforms, shader_data->ubo_offsets.ptr(), shader_data->texture_uniforms, shader_data->default_texture_params, shader_data->ubo_size, true);
+	// GLES2 simplification: no material UBO (plain uniforms); textures unchanged.
+	update_parameters_internal(p_parameters, p_uniform_dirty, p_textures_dirty, shader_data->uniforms, nullptr, shader_data->texture_uniforms, shader_data->default_texture_params, 0, true);
+	_merge_plain_uniform_values(uniform_values, shader_data->uniforms, p_parameters);
+	uniform_locations_program = 0;
+	uniform_locations.clear();
 }
 
 SceneMaterialData::~SceneMaterialData() {
@@ -3682,10 +3761,21 @@ GLES2::MaterialData *GLES2::_create_scene_material_func(ShaderData *p_shader) {
 }
 
 void SceneMaterialData::bind_uniforms() {
-	// Bind Material Uniforms
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_MATERIAL_UNIFORM_LOCATION_GLES2, uniform_buffer);
+	// GLES2 simplification: no material UBO (plain uniforms); bind legacy buffer
+	// only if it exists. Textures follow the normal path.
+	if (uniform_buffer != 0) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_MATERIAL_UNIFORM_LOCATION_GLES2, uniform_buffer);
+	}
 
 	bind_uniforms_generic(texture_cache, shader_data->texture_uniforms);
+}
+
+void SceneMaterialData::bind_material_uniforms(SceneShaderGLES2 &p_shader, RID p_version, SceneShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+		return;
+	}
+	GLuint program = p_shader.version_get_program(p_version, p_variant, p_specialization);
+	_bind_plain_material_uniforms(program, uniform_locations, uniform_locations_program, shader_data->uniforms, uniform_values);
 }
 
 /* Particles SHADER */

@@ -557,14 +557,15 @@ out highp vec4 shadow_coord4;
 #endif // USE_ADDITIVE_LIGHTING
 #endif // RENDER_MOTION_VECTORS
 
+// GLES2 simplification (low-end 3D): material uniforms as plain variables (no UBO).
+// The #MATERIAL_UNIFORMS string already carries "uniform " per declaration
+// (built in SceneShaderData::set_code, global indices included).
 #ifdef MATERIAL_UNIFORMS_USED
 
 /* clang-format off */
-layout(std140) uniform MaterialUniforms { // ubo:3
 
 #MATERIAL_UNIFORMS
 
-};
 /* clang-format on */
 
 #endif
@@ -1161,14 +1162,15 @@ uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
 #endif
 
 /* Material Uniforms */
+// GLES2 simplification (low-end 3D): material uniforms as plain variables (no UBO).
+// The #MATERIAL_UNIFORMS string already carries "uniform " per declaration
+// (built in SceneShaderData::set_code, global indices included).
 #ifdef MATERIAL_UNIFORMS_USED
 
 /* clang-format off */
-layout(std140) uniform MaterialUniforms { // ubo:3
 
 #MATERIAL_UNIFORMS
 
-};
 /* clang-format on */
 
 #endif

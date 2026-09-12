@@ -237,10 +237,17 @@ struct SkyMaterialData : public MaterialData {
 	SkyShaderData *shader_data = nullptr;
 	bool uniform_set_updated = false;
 
+	// GLES2 simplification: material uniforms as plain variables (no UBO).
+	HashMap<StringName, Variant> uniform_values;
+	GLuint uniform_locations_program = 0;
+	HashMap<StringName, GLint> uniform_locations;
+
 	virtual void set_render_priority(int p_priority) {}
 	virtual void set_next_pass(RID p_pass) {}
 	virtual void update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty);
 	virtual void bind_uniforms();
+	void bind_material_uniforms(SkyShaderGLES2 &p_shader, RID p_version, SkyShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
+	void bind_material_uniforms(GLuint p_program);
 	virtual ~SkyMaterialData();
 };
 
@@ -374,10 +381,17 @@ struct SceneMaterialData : public MaterialData {
 	uint32_t index = 0;
 	RID next_pass;
 	uint8_t priority = 0;
+
+	// GLES2 simplification: material uniforms as plain variables (no UBO).
+	HashMap<StringName, Variant> uniform_values;
+	GLuint uniform_locations_program = 0;
+	HashMap<StringName, GLint> uniform_locations;
+
 	virtual void set_render_priority(int p_priority);
 	virtual void set_next_pass(RID p_pass);
 	virtual void update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty);
 	virtual void bind_uniforms();
+	void bind_material_uniforms(SceneShaderGLES2 &p_shader, RID p_version, SceneShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
 	virtual ~SceneMaterialData();
 };
 
@@ -648,9 +662,11 @@ public:
 	virtual void global_shader_parameters_instance_update(RID p_instance, int p_index, const Variant &p_value, int p_flags_count = 0) override;
 
 	GLuint global_shader_parameters_get_uniform_buffer() const;
-	// GLES2 simplification: uploads the global table as a plain uniform array
-	// (no UBO). Values mirror GlobalShaderUniforms::buffer_values.
+	// GLES2 simplification: plain-uniform upload of the global table (no UBO).
+	// Values mirror GlobalShaderUniforms::buffer_values.
 	void global_shader_parameters_upload_as_uniforms(GLint p_location) const;
+	// GLES2 simplification: current global table index for a plain uint uniform.
+	uint32_t global_shader_uniform_get_index(const StringName &p_name) const;
 
 	/* SHADER API */
 

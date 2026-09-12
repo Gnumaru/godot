@@ -94,12 +94,11 @@ uniform uint directional_light_count;
 
 /* clang-format off */
 
+// GLES2 simplification (low-end 3D): material uniforms as plain variables (no UBO).
+// The #MATERIAL_UNIFORMS string already carries "uniform " per declaration
+// (built in SkyShaderData::set_code, global indices included).
 #ifdef MATERIAL_UNIFORMS_USED
-layout(std140) uniform MaterialUniforms{ //ubo:3
-
 #MATERIAL_UNIFORMS
-
-};
 #endif
 /* clang-format on */
 #GLOBALS

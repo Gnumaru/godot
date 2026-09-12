@@ -916,6 +916,11 @@ void RasterizerSceneGLES2::_draw_sky(RID p_env, const Projection &p_projection, 
 	// GLES2 simplification: sky state as plain uniforms (no UBOs).
 	_set_sky_uniforms();
 
+	// GLES2 simplification: material uniforms as plain variables (no UBO).
+	if (material_data) {
+		material_data->bind_material_uniforms(material_storage->shaders.sky_shader, shader_data->version, SkyShaderGLES2::MODE_BACKGROUND, spec_constants);
+	}
+
 	glBindVertexArray(sky_globals.screen_triangle_array);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 }
@@ -1009,6 +1014,14 @@ void RasterizerSceneGLES2::_update_sky_radiance(RID p_env, const Projection &p_p
 
 		// GLES2 simplification: sky state as plain uniforms (no UBOs).
 		_set_sky_uniforms();
+
+		// GLES2 simplification: material uniforms as plain variables (no UBO).
+		// Uses the bound program directly (cubemap binds with default spec).
+		if (material_data) {
+			GLint current_program = 0;
+			glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+			material_data->bind_material_uniforms(GLuint(current_program));
+		}
 
 		glBindVertexArray(sky_globals.screen_triangle_array);
 
@@ -3940,6 +3953,11 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 
 			// GLES2 simplification: 3D state as plain uniforms (no UBOs).
 			_set_scene_state_uniforms();
+
+			// GLES2 simplification: material uniforms as plain variables (no UBO).
+			if (material_data) {
+				material_data->bind_material_uniforms(material_storage->shaders.scene_shader, shader->version, instance_variant, spec_constants);
+			}
 
 			// Pass in lighting uniforms.
 			if constexpr (p_pass_mode == PASS_MODE_COLOR_GLES2 || p_pass_mode == PASS_MODE_COLOR_TRANSPARENT_GLES2) {
