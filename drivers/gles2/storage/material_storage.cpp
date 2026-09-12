@@ -3825,10 +3825,30 @@ void ParticlesShaderData::set_code(const String &p_code) {
 
 	LocalVector<ShaderGLES2::TextureUniformData> texture_uniform_data = get_texture_uniform_data_GLES2(gen_code.texture_uniforms);
 
-	MaterialStorage::get_singleton()->shaders.particles_process_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
+	Vector<String> particles_defines = gen_code.defines;
+	{
+		// Plain global table for user process code (the template UBO is gone).
+		// The process shader object carries no engine defines, so provide the
+		// table size here.
+		particles_defines.push_back("#define MAX_GLOBAL_SHADER_UNIFORMS 256\n");
+		bool uses_global_table = false;
+		for (const KeyValue<String, String> &E : gen_code.code) {
+			if (E.value.contains("global_shader_uniforms[")) {
+				uses_global_table = true;
+				break;
+			}
+		}
+		if (uses_global_table) {
+			particles_defines.push_back("#define PARTICLES_GLOBALS_USED\n");
+		}
+	}
+
+	MaterialStorage::get_singleton()->shaders.particles_process_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], particles_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.particles_process_shader.version_is_valid(version));
 
-	ubo_size = gen_code.uniform_total_size;
+	// GLES2 simplification: material uniforms upload as plain variables (no UBO);
+	// the process pass itself is CPU-stubbed (see ParticlesStorage::update_particles).
+	ubo_size = 0;
 	ubo_offsets = gen_code.uniform_offsets;
 	texture_uniforms = gen_code.texture_uniforms;
 
@@ -3873,8 +3893,11 @@ GLES2::MaterialData *GLES2::_create_particles_material_func(ShaderData *p_shader
 }
 
 void ParticleProcessMaterialData::bind_uniforms() {
-	// Bind Material Uniforms
-	glBindBufferBase(GL_UNIFORM_BUFFER, GLES2::PARTICLES_MATERIAL_UNIFORM_LOCATION, uniform_buffer);
+	// GLES2 simplification: no material UBO (plain uniforms); the process pass
+	// is CPU-stubbed so this only binds legacy data. Textures follow the normal path.
+	if (uniform_buffer != 0) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, GLES2::PARTICLES_MATERIAL_UNIFORM_LOCATION, uniform_buffer);
+	}
 
 	bind_uniforms_generic(texture_cache, shader_data->texture_uniforms, 1); // Start at GL_TEXTURE1 because texture slot 0 is reserved for the heightmap texture.
 }
@@ -3937,10 +3960,27 @@ void TexBlitShaderData::set_code(const String &p_code) {
 
 	LocalVector<ShaderGLES2::TextureUniformData> texture_uniform_data = get_texture_uniform_data_GLES2(gen_code.texture_uniforms);
 
-	MaterialStorage::get_singleton()->shaders.tex_blit_shader.version_set_code(version, gen_code.code, gen_code.uniforms, gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], gen_code.defines, texture_uniform_data);
+	Vector<String> tex_blit_defines = gen_code.defines;
+	{
+		// Declare the plain global table only when user code references it,
+		// so default programs stay small.
+		bool uses_global_table = false;
+		for (const KeyValue<String, String> &E : gen_code.code) {
+			if (E.value.contains("global_shader_uniforms[")) {
+				uses_global_table = true;
+				break;
+			}
+		}
+		if (uses_global_table) {
+			tex_blit_defines.push_back("#define TEXBLIT_GLOBALS_USED\n");
+		}
+	}
+
+	MaterialStorage::get_singleton()->shaders.tex_blit_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], tex_blit_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.tex_blit_shader.version_is_valid(version));
 
-	ubo_size = gen_code.uniform_total_size;
+	// GLES2 simplification: material uniforms upload as plain variables (no UBO).
+	ubo_size = 0;
 	ubo_offsets = gen_code.uniform_offsets;
 	texture_uniforms = gen_code.texture_uniforms;
 
@@ -3979,9 +4019,28 @@ void TexBlitMaterialData::update_parameters(const HashMap<StringName, Variant> &
 }
 
 void TexBlitMaterialData::bind_uniforms() {
-	glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniform_buffer);
+	// GLES2 simplification: no material UBO (plain uniforms, uploaded after the
+	// program binds); bind legacy buffer only if it exists.
+	if (uniform_buffer != 0) {
+		glBindBufferBase(GL_UNIFORM_BUFFER, 0, uniform_buffer);
+	}
 
 	bind_uniforms_generic(texture_cache, shader_data->texture_uniforms, 1);
+}
+
+void TexBlitMaterialData::bind_material_uniforms(TexBlitShaderGLES2 &p_shader, RID p_version, TexBlitShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
+	if (shader_data == nullptr || !shader_data->valid || shader_data->uniforms.is_empty()) {
+		return;
+	}
+	GLuint program = p_shader.version_get_program(p_version, p_variant, p_specialization);
+	_bind_plain_material_uniforms(program, uniform_locations, uniform_locations_program, shader_data->uniforms, uniform_values);
+
+	// Plain global table for user blit code (program already bound).
+	GLint current_program = 0;
+	glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+	if (current_program > 0) {
+		MaterialStorage::get_singleton()->global_shader_parameters_upload_as_uniforms(glGetUniformLocation(GLuint(current_program), "global_shader_uniforms[0]"));
+	}
 }
 
 TexBlitMaterialData::~TexBlitMaterialData() {

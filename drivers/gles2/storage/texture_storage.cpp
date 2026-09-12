@@ -1383,10 +1383,10 @@ void TextureStorage::texture_drawable_blit_rect(const TypedArray<RID> &p_texture
 	TexBlitShaderGLES2::ShaderVariant variant = TexBlitShaderGLES2::MODE_DEFAULT;
 	RID version = tex_blit_shader.default_shader_version;
 	if (m->shader_data->version.is_valid() && m->shader_data->valid) {
-		// Must be called to force user ShaderMaterials to actually populate uniform buffer before binding
+		// Must be called to force user ShaderMaterials to actually populate uniforms before binding
 		// NOTE: Not an ideal work around, maybe in the future this can only update this MaterialData and remove it from the queue, instead of processing all queued updates
 		material_storage->_update_queued_materials();
-		// Bind material uniform buffer and textures.
+		// Bind textures now; plain material uniforms upload after the program binds.
 		m->bind_uniforms();
 		version = m->shader_data->version;
 	}
@@ -1436,6 +1436,11 @@ void TextureStorage::texture_drawable_blit_rect(const TypedArray<RID> &p_texture
 	bool success = material_storage->shaders.tex_blit_shader.version_bind_shader(version, variant, specialization);
 	if (!success) {
 		return;
+	}
+
+	// GLES2 simplification: upload plain material uniforms (needs bound program).
+	if (m->shader_data->version.is_valid() && m->shader_data->valid) {
+		m->bind_material_uniforms(material_storage->shaders.tex_blit_shader, version, variant, specialization);
 	}
 
 	// Calculates the Rects Offset & Size in UV space for Shader to scale Vertex Quad correctly

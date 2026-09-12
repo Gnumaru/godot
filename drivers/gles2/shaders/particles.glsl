@@ -17,17 +17,14 @@ USERDATA6_USED = false
 
 #define SDF_MAX_LENGTH 16384.0
 
-layout(std140) uniform GlobalShaderUniformData { //ubo:1
-	vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
-};
+// GLES2 simplification: global UBO as plain uniform array (same access).
+#ifdef PARTICLES_GLOBALS_USED
+uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
+#endif
 
-// This needs to be outside clang-format so the ubo comment is in the right place
 #ifdef MATERIAL_UNIFORMS_USED
-layout(std140) uniform MaterialUniforms{ //ubo:2
-
+// GLES2 simplification: material UBO as plain uniforms (same access, no block).
 #MATERIAL_UNIFORMS
-
-};
 #endif
 
 /* clang-format on */
@@ -66,35 +63,36 @@ struct Collider {
 	float pad1;
 };
 
-layout(std140) uniform FrameData { //ubo:0
-	bool emitting;
-	uint cycle;
-	float system_phase;
-	float prev_system_phase;
+// GLES2 simplification (low-end 3D): FrameData UBO as individual plain uniforms
+// (same bare access, no block). Never uploaded; the process pass is CPU-stubbed
+// (see ParticlesStorage::update_particles).
+uniform bool emitting;
+uniform uint cycle;
+uniform float system_phase;
+uniform float prev_system_phase;
 
-	float explosiveness;
-	float randomness;
-	float time;
-	float delta;
+uniform float explosiveness;
+uniform float randomness;
+uniform float time;
+uniform float delta;
 
-	float particle_size;
-	float amount_ratio;
-	float pad1;
-	float pad2;
+uniform float particle_size;
+uniform float amount_ratio;
+uniform float pad1;
+uniform float pad2;
 
-	uint random_seed;
-	uint attractor_count;
-	uint collider_count;
-	uint frame;
+uniform uint random_seed;
+uniform uint attractor_count;
+uniform uint collider_count;
+uniform uint frame;
 
-	mat4 emission_transform;
+uniform mat4 emission_transform;
 
-	vec3 emitter_velocity;
-	float interp_to_end;
+uniform vec3 emitter_velocity;
+uniform float interp_to_end;
 
-	Attractor attractors[MAX_ATTRACTORS];
-	Collider colliders[MAX_COLLIDERS];
-};
+uniform Attractor attractors[MAX_ATTRACTORS];
+uniform Collider colliders[MAX_COLLIDERS];
 
 #define PARTICLE_FLAG_ACTIVE uint(1)
 #define PARTICLE_FLAG_STARTED uint(2)

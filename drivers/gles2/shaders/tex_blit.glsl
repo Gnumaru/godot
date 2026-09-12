@@ -60,13 +60,14 @@ layout (location = 2) out vec4 out_color2;
 layout (location = 3) out vec4 out_color3;
 #endif
 
-// This needs to be outside clang-format so the ubo comment is in the right place
+// GLES2 simplification: material UBO as plain uniforms (same access, no block).
 #ifdef MATERIAL_UNIFORMS_USED
-layout(std140) uniform MaterialUniforms{ //ubo:0
-
 #MATERIAL_UNIFORMS
+#endif
 
-};
+// GLES2 simplification: global table as plain uniform array (same access).
+#ifdef TEXBLIT_GLOBALS_USED
+uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
 #endif
 
 #GLOBALS

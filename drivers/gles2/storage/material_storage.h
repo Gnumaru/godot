@@ -484,10 +484,15 @@ ShaderData *_create_tex_blit_shader_func();
 struct TexBlitMaterialData : public MaterialData {
 	TexBlitShaderData *shader_data = nullptr;
 
+	HashMap<StringName, Variant> uniform_values;
+	GLuint uniform_locations_program = 0;
+	HashMap<StringName, GLint> uniform_locations;
+
 	virtual void set_render_priority(int p_priority) {}
 	virtual void set_next_pass(RID p_pass) {}
 	virtual void update_parameters(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty);
 	virtual void bind_uniforms();
+	void bind_material_uniforms(TexBlitShaderGLES2 &p_shader, RID p_version, TexBlitShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
 	virtual ~TexBlitMaterialData();
 };
 
