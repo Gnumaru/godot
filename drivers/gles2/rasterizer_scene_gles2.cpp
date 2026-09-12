@@ -694,7 +694,7 @@ void RasterizerSceneGLES2::_setup_sky(const RenderDataGLES2 *p_render_data, cons
 
 			if (shader_data->uses_time || shader_data->uses_position) {
 				sky_mode = RSE::SKY_MODE_REALTIME;
-			} else if (shader_data->uses_light || sun_scatter_enabled || shader_data->ubo_size > 0) {
+			} else if (shader_data->uses_light || sun_scatter_enabled || !shader_data->uniforms.is_empty()) {
 				sky_mode = RSE::SKY_MODE_INCREMENTAL;
 			} else {
 				sky_mode = RSE::SKY_MODE_QUALITY;
@@ -1531,19 +1531,6 @@ void RasterizerSceneGLES2::_fill_render_list(RenderListTypeGLES2 p_render_list, 
 			surf = surf->next;
 		}
 	}
-}
-
-void RasterizerSceneGLES2::_update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_index, uint32_t p_size, const void *p_source_data, String p_name) {
-	if (p_ubo_buffer == 0) {
-		glGenBuffers(1, &p_ubo_buffer);
-		glBindBufferBase(GL_UNIFORM_BUFFER, p_index, p_ubo_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, p_ubo_buffer, p_size, p_source_data, GL_STREAM_DRAW, p_name);
-	} else {
-		glBindBufferBase(GL_UNIFORM_BUFFER, p_index, p_ubo_buffer);
-		glBufferData(GL_UNIFORM_BUFFER, p_size, p_source_data, GL_STREAM_DRAW);
-	}
-
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
 // GLES2 simplification: 3D state as plain uniforms (no UBOs). Location tables

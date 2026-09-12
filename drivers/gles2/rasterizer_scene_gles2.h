@@ -863,10 +863,8 @@ private:
 
 	RenderList render_list[RENDER_LIST_MAX_GLES2];
 
-	void _update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_index, uint32_t p_size, const void *p_source_data, String p_name = "");
-
-	// GLES2 simplification: plain-uniform uploads (no UBOs), once per program
-	// per frame. Locations are cached in program_uniforms.
+	// GLES2 simplification: 3D state uploads as plain uniforms (no UBOs), once
+	// per program per frame. Locations are cached in program_uniforms.
 	void _ensure_scene_program_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache);
 	void _set_scene_state_uniforms();
 	void _ensure_scene_light_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache);
@@ -960,7 +958,6 @@ protected:
 		GLuint raw_radiance = 0;
 
 		RID material;
-		GLuint uniform_buffer;
 
 		int radiance_size = 256;
 		int mipmap_count = 1;

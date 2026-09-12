@@ -85,7 +85,7 @@ struct Shader {
 /* Material structs */
 
 struct MaterialData {
-	void update_uniform_buffer(const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, const uint32_t *p_uniform_offsets, const HashMap<StringName, Variant> &p_parameters, uint8_t *p_buffer, uint32_t p_buffer_size);
+	void update_global_buffer_usage(const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms);
 	void update_textures(const HashMap<StringName, Variant> &p_parameters, const HashMap<StringName, HashMap<int, RID>> &p_default_textures, const Vector<ShaderCompiler::GeneratedCode::Texture> &p_texture_uniforms, RID *p_textures, bool p_use_linear_color);
 	RID get_default_texture_id(ShaderLanguage::DataType p_type, ShaderLanguage::ShaderNode::Uniform::Hint p_hint);
 
@@ -96,11 +96,10 @@ struct MaterialData {
 	virtual ~MaterialData();
 
 	// Used internally by all Materials
-	void update_parameters_internal(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, const uint32_t *p_uniform_offsets, const Vector<ShaderCompiler::GeneratedCode::Texture> &p_texture_uniforms, const HashMap<StringName, HashMap<int, RID>> &p_default_texture_params, uint32_t p_ubo_size, bool p_is_3d_shader_type);
+	void update_parameters_internal(const HashMap<StringName, Variant> &p_parameters, bool p_uniform_dirty, bool p_textures_dirty, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, const Vector<ShaderCompiler::GeneratedCode::Texture> &p_texture_uniforms, const HashMap<StringName, HashMap<int, RID>> &p_default_texture_params, bool p_is_3d_shader_type);
 
 protected:
-	Vector<uint8_t> ubo_data;
-	GLuint uniform_buffer = GLuint(0);
+	// GLES2 simplification: no material UBO (plain uniforms); textures only.
 	Vector<RID> texture_cache;
 
 private:
@@ -155,8 +154,7 @@ struct CanvasShaderData : public ShaderData {
 
 	Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
 
-	Vector<uint32_t> ubo_offsets;
-	uint32_t ubo_size;
+	// GLES2 simplification: no material UBO (plain uniforms).
 
 	String code;
 
@@ -212,8 +210,7 @@ struct SkyShaderData : public ShaderData {
 
 	Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
 
-	Vector<uint32_t> ubo_offsets;
-	uint32_t ubo_size;
+	// GLES2 simplification: no material UBO (plain uniforms).
 
 	String code;
 
@@ -308,8 +305,7 @@ struct SceneShaderData : public ShaderData {
 
 	Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
 
-	Vector<uint32_t> ubo_offsets;
-	uint32_t ubo_size;
+	// GLES2 simplification: no material UBO (plain uniforms).
 
 	String code;
 
@@ -412,8 +408,7 @@ struct ParticlesShaderData : public ShaderData {
 
 	Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
 
-	Vector<uint32_t> ubo_offsets;
-	uint32_t ubo_size;
+	// GLES2 simplification: no material UBO (plain uniforms).
 
 	String code;
 
@@ -463,8 +458,7 @@ struct TexBlitShaderData : public ShaderData {
 
 	Vector<ShaderCompiler::GeneratedCode::Texture> texture_uniforms;
 
-	Vector<uint32_t> ubo_offsets;
-	uint32_t ubo_size;
+	// GLES2 simplification: no material UBO (plain uniforms).
 
 	String code;
 
@@ -666,7 +660,6 @@ public:
 	virtual void global_shader_parameters_instance_free(RID p_instance) override;
 	virtual void global_shader_parameters_instance_update(RID p_instance, int p_index, const Variant &p_value, int p_flags_count = 0) override;
 
-	GLuint global_shader_parameters_get_uniform_buffer() const;
 	// GLES2 simplification: plain-uniform upload of the global table (no UBO).
 	// Values mirror GlobalShaderUniforms::buffer_values.
 	void global_shader_parameters_upload_as_uniforms(GLint p_location) const;
