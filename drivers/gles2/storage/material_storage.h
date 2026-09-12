@@ -538,7 +538,7 @@ struct GlobalShaderUniforms {
 	List<RID> materials_using_buffer;
 	List<RID> materials_using_texture;
 
-	GLuint buffer = GLuint(0);
+	// GLES2 simplification: CPU mirror only (no GL uniform buffer).
 	Value *buffer_values = nullptr;
 	ValueUsage *buffer_usage = nullptr;
 	bool *buffer_dirty_regions = nullptr;

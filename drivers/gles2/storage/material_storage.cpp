@@ -1108,6 +1108,11 @@ void MaterialData::update_parameters_internal(const HashMap<StringName, Variant>
 		if (ubo_data.size()) {
 			ERR_FAIL_COND(p_ubo_size > uint32_t(Config::get_singleton()->max_uniform_buffer_size));
 			memset(ubo_data.ptrw(), 0, ubo_data.size()); //clear
+		} else if (uniform_buffer) {
+			// GLES2 simplification: shader types converted to plain uniforms
+			// report ubo_size 0; release the stale GL buffer.
+			glDeleteBuffers(1, &uniform_buffer);
+			uniform_buffer = 0;
 		}
 	}
 
@@ -1173,9 +1178,8 @@ MaterialStorage::MaterialStorage() {
 	global_shader_uniforms.buffer_usage = memnew_arr(GlobalShaderUniforms::ValueUsage, global_shader_uniforms.buffer_size);
 	global_shader_uniforms.buffer_dirty_regions = memnew_arr(bool, 1 + (global_shader_uniforms.buffer_size / GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE));
 	memset(global_shader_uniforms.buffer_dirty_regions, 0, sizeof(bool) * (1 + (global_shader_uniforms.buffer_size / GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE)));
-	glGenBuffers(1, &global_shader_uniforms.buffer);
-	glBindBuffer(GL_UNIFORM_BUFFER, global_shader_uniforms.buffer);
-	glBufferData(GL_UNIFORM_BUFFER, sizeof(GlobalShaderUniforms::Value) * global_shader_uniforms.buffer_size, nullptr, GL_DYNAMIC_DRAW);
+	// GLES2 simplification: no GL uniform buffer for globals (plain uniforms
+	// upload the whole table); only the CPU mirror above is used.
 	glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
 	{
@@ -1600,7 +1604,7 @@ MaterialStorage::~MaterialStorage() {
 	memdelete_arr(global_shader_uniforms.buffer_values);
 	memdelete_arr(global_shader_uniforms.buffer_usage);
 	memdelete_arr(global_shader_uniforms.buffer_dirty_regions);
-	glDeleteBuffers(1, &global_shader_uniforms.buffer);
+	// GLES2 simplification: no GL uniform buffer (see init).
 
 	singleton = nullptr;
 }
@@ -2091,7 +2095,8 @@ void MaterialStorage::global_shader_parameters_clear() {
 }
 
 GLuint MaterialStorage::global_shader_parameters_get_uniform_buffer() const {
-	return global_shader_uniforms.buffer;
+	// GLES2 simplification: no GL uniform buffer (plain uniforms); no callers left.
+	return 0;
 }
 
 void MaterialStorage::global_shader_parameters_upload_as_uniforms(GLint p_location) const {
@@ -2197,25 +2202,10 @@ void MaterialStorage::global_shader_parameters_instance_update(RID p_instance, i
 void MaterialStorage::_update_global_shader_uniforms() {
 	MaterialStorage *material_storage = MaterialStorage::get_singleton();
 	if (global_shader_uniforms.buffer_dirty_region_count > 0) {
+		// GLES2 simplification: no GL uniform buffer to update (plain uniforms
+		// upload the whole table); just clear dirty state.
 		uint32_t total_regions = 1 + (global_shader_uniforms.buffer_size / GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE);
-		if (total_regions / global_shader_uniforms.buffer_dirty_region_count <= 4) {
-			// 25% of regions dirty, just update all buffer
-			glBindBuffer(GL_UNIFORM_BUFFER, global_shader_uniforms.buffer);
-			glBufferData(GL_UNIFORM_BUFFER, sizeof(GlobalShaderUniforms::Value) * global_shader_uniforms.buffer_size, global_shader_uniforms.buffer_values, GL_DYNAMIC_DRAW);
-			glBindBuffer(GL_UNIFORM_BUFFER, 0);
-			memset(global_shader_uniforms.buffer_dirty_regions, 0, sizeof(bool) * total_regions);
-		} else {
-			uint32_t region_byte_size = sizeof(GlobalShaderUniforms::Value) * GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE;
-			glBindBuffer(GL_UNIFORM_BUFFER, global_shader_uniforms.buffer);
-			for (uint32_t i = 0; i < total_regions; i++) {
-				if (global_shader_uniforms.buffer_dirty_regions[i]) {
-					glBufferSubData(GL_UNIFORM_BUFFER, i * region_byte_size, region_byte_size, &global_shader_uniforms.buffer_values[i * GlobalShaderUniforms::BUFFER_DIRTY_REGION_SIZE]);
-					global_shader_uniforms.buffer_dirty_regions[i] = false;
-				}
-			}
-			glBindBuffer(GL_UNIFORM_BUFFER, 0);
-		}
-
+		memset(global_shader_uniforms.buffer_dirty_regions, 0, sizeof(bool) * total_regions);
 		global_shader_uniforms.buffer_dirty_region_count = 0;
 	}
 
@@ -2784,7 +2774,8 @@ void CanvasShaderData::set_code(const String &p_code) {
 	vertex_input_mask |= uses_custom0 << RSE::ARRAY_CUSTOM0;
 	vertex_input_mask |= uses_custom1 << RSE::ARRAY_CUSTOM1;
 
-	ubo_size = gen_code.uniform_total_size;
+	// GLES2 simplification: material uniforms upload as plain variables (no UBO).
+	ubo_size = 0;
 	ubo_offsets = gen_code.uniform_offsets;
 	texture_uniforms = gen_code.texture_uniforms;
 
@@ -3356,7 +3347,8 @@ void SkyShaderData::set_code(const String &p_code) {
 	MaterialStorage::get_singleton()->shaders.sky_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], sky_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.sky_shader.version_is_valid(version));
 
-	ubo_size = gen_code.uniform_total_size;
+	// GLES2 simplification: material uniforms upload as plain variables (no UBO).
+	ubo_size = 0;
 	ubo_offsets = gen_code.uniform_offsets;
 	texture_uniforms = gen_code.texture_uniforms;
 
@@ -3692,7 +3684,8 @@ void SceneShaderData::set_code(const String &p_code) {
 	MaterialStorage::get_singleton()->shaders.scene_shader.version_set_code(version, gen_code.code, _material_uniforms_to_plain(gen_code.uniforms), gen_code.stage_globals[ShaderCompiler::STAGE_VERTEX], gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT], scene_defines, texture_uniform_data);
 	ERR_FAIL_COND(!MaterialStorage::get_singleton()->shaders.scene_shader.version_is_valid(version));
 
-	ubo_size = gen_code.uniform_total_size;
+	// GLES2 simplification: material uniforms upload as plain variables (no UBO).
+	ubo_size = 0;
 	ubo_offsets = gen_code.uniform_offsets;
 	texture_uniforms = gen_code.texture_uniforms;
 
