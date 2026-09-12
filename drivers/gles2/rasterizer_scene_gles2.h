@@ -846,9 +846,9 @@ private:
 
 	// GLES2 simplification: plain-uniform uploads (no UBOs), once per program
 	// per frame. Locations are cached in program_uniforms.
-	void _ensure_scene_program_uniforms(GLuint p_program, ProgramUniforms &r_cache);
-	void _set_scene_state_uniforms(RID p_version, SceneShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
-	void _set_sky_uniforms(RID p_version, SkyShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization);
+	void _ensure_scene_program_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache);
+	void _set_scene_state_uniforms();
+	void _set_sky_uniforms();
 
 	void _setup_lights(const RenderDataGLES2 *p_render_data, bool p_using_shadows, uint32_t &r_directional_light_count, uint32_t &r_omni_light_count, uint32_t &r_spot_light_count, uint32_t &r_area_light_count, uint32_t &r_directional_shadow_count);
 	void _setup_environment(const RenderDataGLES2 *p_render_data, bool p_no_fog, const Size2i &p_screen_size, bool p_flip_y, const Color &p_default_bg_color, bool p_pancake_shadows, float p_shadow_bias = 0.0);
@@ -909,7 +909,7 @@ protected:
 		DirectionalLightData *directional_lights = nullptr;
 		DirectionalLightData *last_frame_directional_lights = nullptr;
 		uint32_t last_frame_directional_light_count = 0;
-		GLuint directional_light_buffer = 0;
+		// GLES2 simplification: no directional light UBO (plain uniforms).
 
 		RID shader_default_version;
 		RID default_material;

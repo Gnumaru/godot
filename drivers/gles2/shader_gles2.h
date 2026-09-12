@@ -250,7 +250,7 @@ public:
 
 	RenderingServerTypes::ShaderNativeSourceCode version_get_native_source_code(RID p_version);
 
-	// GLES2 simplification: programa atual para upload de uniforms comuns por draw.
+	// GLES2 simplification: program id for per-program plain-uniform uploads.
 	GLuint version_get_program(RID p_version, int p_variant, uint64_t p_specialization);
 
 	void initialize(const String &p_general_defines = "", int p_base_texture_index = 0);

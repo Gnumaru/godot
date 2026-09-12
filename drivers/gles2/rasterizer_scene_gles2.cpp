@@ -725,7 +725,8 @@ void RasterizerSceneGLES2::_setup_sky(const RenderDataGLES2 *p_render_data, cons
 	}
 
 	bool sun_scatter_enabled = environment_get_fog_enabled(p_render_data->environment) && environment_get_fog_sun_scatter(p_render_data->environment) > 0.001;
-	glBindBufferBase(GL_UNIFORM_BUFFER, SKY_DIRECTIONAL_LIGHT_UNIFORM_LOCATION_GLES2, sky_globals.directional_light_buffer);
+	// GLES2 simplification: sky directional lights go to plain uniforms per
+	// program (see _set_sky_uniforms); no UBO bind here.
 	if (shader_data->uses_light || sun_scatter_enabled) {
 		sky_globals.directional_light_count = 0;
 		for (int i = 0; i < (int)p_lights.size(); i++) {
@@ -804,9 +805,8 @@ void RasterizerSceneGLES2::_setup_sky(const RenderDataGLES2 *p_render_data, cons
 		}
 
 		if (light_data_dirty) {
-			glBufferData(GL_UNIFORM_BUFFER, sizeof(DirectionalLightData) * sky_globals.max_directional_lights, sky_globals.directional_lights, GL_STREAM_DRAW);
-			glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
+			// GLES2 simplification: values stay staged for plain-uniform upload;
+			// no buffer upload (see _set_sky_uniforms).
 			DirectionalLightData *temp = sky_globals.last_frame_directional_lights;
 			sky_globals.last_frame_directional_lights = sky_globals.directional_lights;
 			sky_globals.directional_lights = temp;
@@ -817,10 +817,8 @@ void RasterizerSceneGLES2::_setup_sky(const RenderDataGLES2 *p_render_data, cons
 		}
 	}
 
-	if (p_render_data->view_count > 1) {
-		glBindBufferBase(GL_UNIFORM_BUFFER, SKY_MULTIVIEW_UNIFORM_LOCATION_GLES2, scene_state.multiview_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
-	}
+	// GLES2 simplification: sky multiview goes to plain uniforms per program
+	// (see _set_sky_uniforms); no UBO bind here.
 
 	if (sky && !sky->radiance) {
 		_invalidate_sky(sky);
@@ -915,10 +913,8 @@ void RasterizerSceneGLES2::_draw_sky(RID p_env, const Projection &p_projection, 
 	material_storage->shaders.sky_shader.version_set_uniform(SkyShaderGLES2::FOG_SKY_AFFECT, environment_get_fog_sky_affect(p_env), shader_data->version, SkyShaderGLES2::MODE_BACKGROUND, spec_constants);
 	material_storage->shaders.sky_shader.version_set_uniform(SkyShaderGLES2::DIRECTIONAL_LIGHT_COUNT, sky_globals.directional_light_count, shader_data->version, SkyShaderGLES2::MODE_BACKGROUND, spec_constants);
 
-	if (p_use_multiview) {
-		glBindBufferBase(GL_UNIFORM_BUFFER, SKY_MULTIVIEW_UNIFORM_LOCATION_GLES2, scene_state.multiview_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
-	}
+	// GLES2 simplification: sky state as plain uniforms (no UBOs).
+	_set_sky_uniforms();
 
 	glBindVertexArray(sky_globals.screen_triangle_array);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -1010,6 +1006,9 @@ void RasterizerSceneGLES2::_update_sky_radiance(RID p_env, const Projection &p_p
 		material_storage->shaders.sky_shader.version_set_uniform(SkyShaderGLES2::PROJECTION, cm.columns[2][0], cm.columns[0][0], cm.columns[2][1], cm.columns[1][1], shader_data->version, SkyShaderGLES2::MODE_CUBEMAP);
 		material_storage->shaders.sky_shader.version_set_uniform(SkyShaderGLES2::SKY_ENERGY_MULTIPLIER, p_sky_energy_multiplier, shader_data->version, SkyShaderGLES2::MODE_CUBEMAP);
 		material_storage->shaders.sky_shader.version_set_uniform(SkyShaderGLES2::LUMINANCE_MULTIPLIER, 1.0, shader_data->version, SkyShaderGLES2::MODE_CUBEMAP);
+
+		// GLES2 simplification: sky state as plain uniforms (no UBOs).
+		_set_sky_uniforms();
 
 		glBindVertexArray(sky_globals.screen_triangle_array);
 
@@ -1537,7 +1536,7 @@ void RasterizerSceneGLES2::_update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_inde
 // GLES2 simplification: 3D state as plain uniforms (no UBOs). Location tables
 // below mirror the SceneData/MultiviewData/TonemapData GLSL members; values come
 // from the staged scene_state structs, byte-identical to the old UBO uploads.
-void RasterizerSceneGLES2::_ensure_scene_program_uniforms(GLuint p_program, ProgramUniforms &r_cache) {
+void RasterizerSceneGLES2::_ensure_scene_program_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache) {
 	r_cache.projection_matrix = glGetUniformLocation(p_program, "scene_data_block.data.projection_matrix");
 	r_cache.inv_projection_matrix = glGetUniformLocation(p_program, "scene_data_block.data.inv_projection_matrix");
 	r_cache.inv_view_matrix = glGetUniformLocation(p_program, "scene_data_block.data.inv_view_matrix");
@@ -1632,14 +1631,15 @@ void RasterizerSceneGLES2::_ensure_scene_program_uniforms(GLuint p_program, Prog
 	r_cache.sky_mv_eye_offset = glGetUniformLocation(p_program, "multiview_data.eye_offset[0]");
 }
 
-void RasterizerSceneGLES2::_set_scene_state_uniforms(RID p_version, SceneShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
-	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
-	GLuint program = material_storage->shaders.scene_shader.version_get_program(p_version, p_variant, p_specialization);
-	if (program == 0) {
+void RasterizerSceneGLES2::_set_scene_state_uniforms() {
+	GLint current_program = 0;
+	glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+	if (current_program <= 0) {
 		return;
 	}
+	GLuint program = GLuint(current_program);
 	uint64_t frame = RSG::rasterizer->get_frame_number();
-	ProgramUniforms &cache = scene_state.program_uniforms[program];
+	SceneState::ProgramUniforms &cache = scene_state.program_uniforms[program];
 	// Refresh locations once per program (covers re-links); values every frame.
 	bool query = (cache.frame == 0);
 	// Note: frame 0 never occurs at runtime; first use always queries.
@@ -1738,17 +1738,18 @@ void RasterizerSceneGLES2::_set_scene_state_uniforms(RID p_version, SceneShaderG
 	glUniform1f(cache.tonemap_contrast, tm.contrast);
 	glUniform1f(cache.tonemap_saturation, tm.saturation);
 
-	material_storage->global_shader_parameters_upload_as_uniforms(cache.global_table);
+	GLES2::MaterialStorage::get_singleton()->global_shader_parameters_upload_as_uniforms(cache.global_table);
 }
 
-void RasterizerSceneGLES2::_set_sky_uniforms(RID p_version, SkyShaderGLES2::ShaderVariant p_variant, uint64_t p_specialization) {
-	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
-	GLuint program = material_storage->shaders.sky_shader.version_get_program(p_version, p_variant, p_specialization);
-	if (program == 0) {
+void RasterizerSceneGLES2::_set_sky_uniforms() {
+	GLint current_program = 0;
+	glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+	if (current_program <= 0) {
 		return;
 	}
+	GLuint program = GLuint(current_program);
 	uint64_t frame = RSG::rasterizer->get_frame_number();
-	ProgramUniforms &cache = scene_state.program_uniforms[program];
+	SceneState::ProgramUniforms &cache = scene_state.program_uniforms[program];
 	if (cache.frame == 0) {
 		_ensure_scene_program_uniforms(program, cache);
 	}
@@ -1795,20 +1796,7 @@ void RasterizerSceneGLES2::_set_sky_uniforms(RID p_version, SkyShaderGLES2::Shad
 	glUniform1f(cache.tonemap_contrast, tm.contrast);
 	glUniform1f(cache.tonemap_saturation, tm.saturation);
 
-	material_storage->global_shader_parameters_upload_as_uniforms(cache.global_table);
-}
-
-void RasterizerSceneGLES2::_update_scene_ubo(GLuint &p_ubo_buffer, GLuint p_index, uint32_t p_size, const void *p_source_data, String p_name) {
-	if (p_ubo_buffer == 0) {
-		glGenBuffers(1, &p_ubo_buffer);
-		glBindBufferBase(GL_UNIFORM_BUFFER, p_index, p_ubo_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, p_ubo_buffer, p_size, p_source_data, GL_STREAM_DRAW, p_name);
-	} else {
-		glBindBufferBase(GL_UNIFORM_BUFFER, p_index, p_ubo_buffer);
-		glBufferData(GL_UNIFORM_BUFFER, p_size, p_source_data, GL_STREAM_DRAW);
-	}
-
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	GLES2::MaterialStorage::get_singleton()->global_shader_parameters_upload_as_uniforms(cache.global_table);
 }
 
 // Needs to be called after _setup_lights so that directional_light_count is accurate.
@@ -1953,20 +1941,8 @@ void RasterizerSceneGLES2::_setup_environment(const RenderDataGLES2 *p_render_da
 		scene_state.data.IBL_exposure_normalization = 1.0;
 	}
 
-	_update_scene_ubo(scene_state.ubo_buffer, SCENE_DATA_UNIFORM_LOCATION_GLES2, sizeof(SceneState::UBO), &scene_state.data, "Scene state UBO");
-	if (p_render_data->view_count > 1) {
-		_update_scene_ubo(scene_state.multiview_buffer, SCENE_MULTIVIEW_UNIFORM_LOCATION_GLES2, sizeof(SceneState::MultiviewUBO), &scene_state.multiview_data, "Multiview UBO");
-	}
-
-	if (scene_state.prev_data_state != 0) {
-		void *source_data = scene_state.prev_data_state == 1 ? &scene_state.data : &scene_state.prev_data;
-		_update_scene_ubo(scene_state.prev_ubo_buffer, SCENE_PREV_DATA_UNIFORM_LOCATION_GLES2, sizeof(SceneState::UBO), source_data, "Previous scene state UBO");
-
-		if (p_render_data->view_count > 1) {
-			source_data = scene_state.prev_data_state == 1 ? &scene_state.multiview_data : &scene_state.prev_multiview_data;
-			_update_scene_ubo(scene_state.prev_multiview_buffer, SCENE_PREV_MULTIVIEW_UNIFORM_LOCATION_GLES2, sizeof(SceneState::MultiviewUBO), source_data, "Previous multiview UBO");
-		}
-	}
+	// GLES2 simplification: 3D state lives in scene_state structs and goes to
+	// plain uniforms per program (see _set_scene_state_uniforms); no UBO upload.
 }
 
 // Puts lights into Uniform Buffers. Needs to be called before _fill_list as this caches the index of each light in the Uniform Buffer
@@ -2621,10 +2597,8 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 	glBindFramebuffer(GL_FRAMEBUFFER, shadow_fb);
 	glViewport(atlas_rect.position.x, atlas_rect.position.y, atlas_rect.size.x, atlas_rect.size.y);
 
-	GLuint global_buffer = GLES2::MaterialStorage::get_singleton()->global_shader_parameters_get_uniform_buffer();
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_GLOBALS_UNIFORM_LOCATION_GLES2, global_buffer);
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	// GLES2 simplification: globals go to a plain uniform array per program
+	// (see _set_scene_state_uniforms/_set_sky_uniforms); no UBO bind here.
 
 	scene_state.reset_gl_state();
 	scene_state.enable_gl_depth_test(true);
@@ -2769,8 +2743,7 @@ void RasterizerSceneGLES2::render_scene(const Ref<RenderSceneBuffers> &p_render_
 	// Fill Light lists here
 	//////////
 
-	GLuint global_buffer = GLES2::MaterialStorage::get_singleton()->global_shader_parameters_get_uniform_buffer();
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_GLOBALS_UNIFORM_LOCATION_GLES2, global_buffer);
+	// GLES2 simplification: globals go to a plain uniform array per program; no UBO bind here.
 
 	Color clear_color;
 	if (!is_reflection_probe && rb->render_target.is_valid()) {
@@ -2799,17 +2772,9 @@ void RasterizerSceneGLES2::render_scene(const Ref<RenderSceneBuffers> &p_render_
 		tonemap_ubo.saturation = environment_get_adjustments_saturation(render_data.environment);
 	}
 
-	if (scene_state.tonemap_buffer == 0) {
-		// Only create if using 3D
-		glGenBuffers(1, &scene_state.tonemap_buffer);
-		glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_TONEMAP_UNIFORM_LOCATION_GLES2, scene_state.tonemap_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.tonemap_buffer, sizeof(SceneState::TonemapUBO), &tonemap_ubo, GL_STREAM_DRAW, "Tonemap UBO");
-	} else {
-		glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_TONEMAP_UNIFORM_LOCATION_GLES2, scene_state.tonemap_buffer);
-		glBufferData(GL_UNIFORM_BUFFER, sizeof(SceneState::TonemapUBO), &tonemap_ubo, GL_STREAM_DRAW);
-	}
-
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	// GLES2 simplification: tonemap values persist for plain-uniform upload
+	// (no UBO); scene/sky programs read scene_state.tonemap_data at bind time.
+	scene_state.tonemap_data = tonemap_ubo;
 
 	scene_state.data.emissive_exposure_normalization = -1.0; // Use default exposure normalization.
 
@@ -3973,6 +3938,9 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 				material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::OPAQUE_PREPASS_THRESHOLD, opaque_prepass_threshold, shader->version, instance_variant, spec_constants);
 			}
 
+			// GLES2 simplification: 3D state as plain uniforms (no UBOs).
+			_set_scene_state_uniforms();
+
 			// Pass in lighting uniforms.
 			if constexpr (p_pass_mode == PASS_MODE_COLOR_GLES2 || p_pass_mode == PASS_MODE_COLOR_TRANSPARENT_GLES2) {
 				GLES2::Config *config = GLES2::Config::get_singleton();
@@ -4352,10 +4320,8 @@ void RasterizerSceneGLES2::render_particle_collider_heightfield(RID p_collider, 
 	glBindFramebuffer(GL_FRAMEBUFFER, fb);
 	glViewport(0, 0, fb_size.width, fb_size.height);
 
-	GLuint global_buffer = GLES2::MaterialStorage::get_singleton()->global_shader_parameters_get_uniform_buffer();
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_GLOBALS_UNIFORM_LOCATION_GLES2, global_buffer);
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	// GLES2 simplification: globals go to a plain uniform array per program
+	// (see _set_scene_state_uniforms/_set_sky_uniforms); no UBO bind here.
 
 	scene_state.reset_gl_state();
 	scene_state.enable_gl_depth_test(true);
@@ -4398,10 +4364,8 @@ void RasterizerSceneGLES2::_render_uv2(const PagedArray<RenderGeometryInstance *
 		glBindFramebuffer(GL_FRAMEBUFFER, p_framebuffer);
 		glViewport(p_region.position.x, p_region.position.y, p_region.size.x, p_region.size.y);
 
-		GLuint global_buffer = GLES2::MaterialStorage::get_singleton()->global_shader_parameters_get_uniform_buffer();
-
-		glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_GLOBALS_UNIFORM_LOCATION_GLES2, global_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		// GLES2 simplification: globals go to a plain uniform array per program
+		// (see _set_scene_state_uniforms/_set_sky_uniforms); no UBO bind here.
 
 		scene_state.reset_gl_state();
 		scene_state.enable_gl_depth_test(true);
@@ -4866,15 +4830,10 @@ RasterizerSceneGLES2::RasterizerSceneGLES2() {
 
 	{
 		sky_globals.max_directional_lights = 4;
-		uint32_t directional_light_buffer_size = sky_globals.max_directional_lights * sizeof(DirectionalLightData);
 		sky_globals.directional_lights = memnew_arr(DirectionalLightData, sky_globals.max_directional_lights);
 		sky_globals.last_frame_directional_lights = memnew_arr(DirectionalLightData, sky_globals.max_directional_lights);
 		sky_globals.last_frame_directional_light_count = sky_globals.max_directional_lights + 1;
-		glGenBuffers(1, &sky_globals.directional_light_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, sky_globals.directional_light_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, sky_globals.directional_light_buffer, directional_light_buffer_size, nullptr, GL_STREAM_DRAW, "Sky DirectionalLight UBO");
-
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		// GLES2 simplification: no directional light UBO (plain uniforms).
 	}
 
 	{
@@ -5067,30 +5026,11 @@ RasterizerSceneGLES2::~RasterizerSceneGLES2() {
 	RSG::material_storage->shader_free(sky_globals.fog_shader);
 	GLES2::Utilities::get_singleton()->buffer_free_data(sky_globals.screen_triangle);
 	glDeleteVertexArrays(1, &sky_globals.screen_triangle_array);
-	GLES2::Utilities::get_singleton()->buffer_free_data(sky_globals.directional_light_buffer);
 	memdelete_arr(sky_globals.directional_lights);
 	memdelete_arr(sky_globals.last_frame_directional_lights);
 
-	// UBOs
-	if (scene_state.ubo_buffer != 0) {
-		GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.ubo_buffer);
-	}
-
-	if (scene_state.prev_ubo_buffer != 0) {
-		GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.prev_ubo_buffer);
-	}
-
-	if (scene_state.multiview_buffer != 0) {
-		GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.multiview_buffer);
-	}
-
-	if (scene_state.prev_multiview_buffer != 0) {
-		GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.prev_multiview_buffer);
-	}
-
-	if (scene_state.tonemap_buffer != 0) {
-		GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.tonemap_buffer);
-	}
+	// GLES2 simplification: scene/multiview/prev/tonemap/sky-directional UBOs
+	// removed (plain uniforms); light/shadow UBOs below remain for now.
 
 	singleton = nullptr;
 }
