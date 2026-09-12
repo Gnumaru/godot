@@ -2884,8 +2884,8 @@ static void bind_uniforms_generic(const Vector<RID> &p_textures, const Vector<Sh
 }
 
 void CanvasMaterialData::bind_uniforms() {
-	// GLES2 simplification: sem UBO de material (uniforms comuns); o buffer so
-	// existe se ainda houver dados (legado). Texturas seguem o caminho normal.
+	// GLES2 simplification: no material UBO (plain uniforms); the buffer only
+	// exists if there is legacy data. Textures follow the normal path.
 	if (uniform_buffer != 0) {
 		glBindBufferBase(GL_UNIFORM_BUFFER, RasterizerCanvasGLES2::MATERIAL_UNIFORM_LOCATION, uniform_buffer);
 	}
@@ -3192,6 +3192,12 @@ static void _set_plain_uniform(GLint p_location, ShaderLanguage::DataType p_type
 // Shared per-draw upload for canvas/spatial/sky material uniforms as plain
 // variables (no UBO). Skips textures (texture cache path), instance uniforms
 // (instance buffer path) and resolves globals from the global table.
+static String _plain_uniform_mkid(const String &p_id) {
+	// Mirrors ShaderCompiler::_mkid: user uniform "foo" is declared as "m_foo".
+	String id = "m_" + p_id.replace("__", "_dus_");
+	return id.replace("__", "_dus_"); //doubleunderscore is reserved in glsl
+}
+
 static void _bind_plain_material_uniforms(GLuint p_program, HashMap<StringName, GLint> &r_locations, GLuint &r_locations_program, const HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> &p_uniforms, const HashMap<StringName, Variant> &p_uniform_values) {
 	if (p_program == 0) {
 		return;
@@ -3213,7 +3219,7 @@ static void _bind_plain_material_uniforms(GLuint p_program, HashMap<StringName, 
 		if (L) {
 			location = L->value;
 		} else {
-			CharString cname = String(E.key).utf8();
+			CharString cname = _plain_uniform_mkid(E.key).utf8();
 			location = glGetUniformLocation(p_program, cname.get_data());
 			r_locations[E.key] = location;
 		}
