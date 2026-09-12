@@ -260,7 +260,7 @@ struct PositionalShadowData {
 };
 
 // GLES2 simplification (low-end 3D): shadow UBO as plain uniform array.
-PositionalShadowData positional_shadows[MAX_POSITIONAL_SHADOWS];
+uniform PositionalShadowData positional_shadows[MAX_POSITIONAL_SHADOWS];
 
 uniform lowp uint positional_shadow_index;
 
@@ -281,7 +281,7 @@ struct DirectionalShadowData {
 };
 
 // GLES2 simplification (low-end 3D): shadow UBO as plain uniform array.
-DirectionalShadowData directional_shadows[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
+uniform DirectionalShadowData directional_shadows[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
 
 uniform lowp uint directional_shadow_index;
 
@@ -313,7 +313,7 @@ struct DirectionalLightData {
 };
 
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-DirectionalLightData directional_lights[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
+uniform DirectionalLightData directional_lights[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
 
 #define DIRECTIONAL_LIGHT_ENABLED uint(1 << 0)
 #define DIRECTIONAL_LIGHT_BAKE_STATIC uint(1 << 1)
@@ -347,7 +347,7 @@ struct LightData { // This structure needs to be as packed as possible.
 
 #if !defined(DISABLE_LIGHT_OMNI) || defined(ADDITIVE_OMNI)
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-LightData omni_lights[MAX_OMNI_LIGHTS];
+uniform LightData omni_lights[MAX_OMNI_LIGHTS];
 #ifdef BASE_PASS
 uniform uint omni_light_indices[MAX_FORWARD_LIGHTS];
 uniform uint omni_light_count;
@@ -356,7 +356,7 @@ uniform uint omni_light_count;
 
 #if !defined(DISABLE_LIGHT_SPOT) || defined(ADDITIVE_SPOT)
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-LightData spot_lights[MAX_SPOT_LIGHTS];
+uniform LightData spot_lights[MAX_SPOT_LIGHTS];
 #ifdef BASE_PASS
 uniform uint spot_light_indices[MAX_FORWARD_LIGHTS];
 uniform uint spot_light_count;
@@ -365,7 +365,7 @@ uniform uint spot_light_count;
 
 #if !defined(DISABLE_LIGHT_AREA)
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-LightData area_lights[MAX_AREA_LIGHTS];
+uniform LightData area_lights[MAX_AREA_LIGHTS];
 #if defined(BASE_PASS) && !defined(USE_VERTEX_LIGHTING)
 uniform uint area_light_indices[MAX_FORWARD_LIGHTS];
 uniform uint area_light_count;
@@ -1276,7 +1276,7 @@ struct DirectionalLightData {
 };
 
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-DirectionalLightData directional_lights[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
+uniform DirectionalLightData directional_lights[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
 
 #if defined(USE_ADDITIVE_LIGHTING) && (!defined(ADDITIVE_OMNI) && !defined(ADDITIVE_SPOT))
 // Directional shadows can be in the base pass or in the additive passes
@@ -1312,7 +1312,7 @@ struct LightData { // This structure needs to be as packed as possible.
 
 #if !defined(DISABLE_LIGHT_OMNI) || defined(ADDITIVE_OMNI)
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-LightData omni_lights[MAX_OMNI_LIGHTS];
+uniform LightData omni_lights[MAX_OMNI_LIGHTS];
 #if defined(BASE_PASS) && !defined(USE_VERTEX_LIGHTING)
 uniform uint omni_light_indices[MAX_FORWARD_LIGHTS];
 uniform uint omni_light_count;
@@ -1321,7 +1321,7 @@ uniform uint omni_light_count;
 
 #if !defined(DISABLE_LIGHT_SPOT) || defined(ADDITIVE_SPOT)
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-LightData spot_lights[MAX_SPOT_LIGHTS];
+uniform LightData spot_lights[MAX_SPOT_LIGHTS];
 #if defined(BASE_PASS) && !defined(USE_VERTEX_LIGHTING)
 uniform uint spot_light_indices[MAX_FORWARD_LIGHTS];
 uniform uint spot_light_count;
@@ -1330,7 +1330,7 @@ uniform uint spot_light_count;
 
 #if !defined(DISABLE_LIGHT_AREA)
 // GLES2 simplification (low-end 3D): light UBO as plain uniform array.
-LightData area_lights[MAX_AREA_LIGHTS];
+uniform LightData area_lights[MAX_AREA_LIGHTS];
 uniform highp sampler2D ltc_lut1; // texunit:-10
 uniform highp sampler2D ltc_lut2; // texunit:-11
 
@@ -1362,7 +1362,7 @@ struct PositionalShadowData {
 };
 
 // GLES2 simplification (low-end 3D): shadow UBO as plain uniform array.
-PositionalShadowData positional_shadows[MAX_POSITIONAL_SHADOWS];
+uniform PositionalShadowData positional_shadows[MAX_POSITIONAL_SHADOWS];
 
 uniform lowp uint positional_shadow_index;
 #else // ADDITIVE_DIRECTIONAL
@@ -1381,7 +1381,7 @@ struct DirectionalShadowData {
 };
 
 // GLES2 simplification (low-end 3D): shadow UBO as plain uniform array.
-DirectionalShadowData directional_shadows[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
+uniform DirectionalShadowData directional_shadows[MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS];
 
 uniform lowp uint directional_shadow_index;
 #endif // !(defined(ADDITIVE_OMNI) || defined(ADDITIVE_SPOT))
