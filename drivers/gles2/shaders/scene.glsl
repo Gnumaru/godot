@@ -1225,10 +1225,10 @@ struct SceneData {
 
 // GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
 // (same member access, no block).
-struct SceneDataBlockFrag {
+struct SceneDataBlock {
 	SceneData data;
 };
-uniform SceneDataBlockFrag scene_data_block;
+uniform SceneDataBlock scene_data_block;
 
 #ifdef USE_MULTIVIEW
 struct MultiviewData {
@@ -1239,10 +1239,10 @@ struct MultiviewData {
 
 // GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
 // (same member access, no block).
-struct MultiviewDataBlockFrag {
+struct MultiviewDataBlock {
 	MultiviewData data;
 };
-uniform MultiviewDataBlockFrag multiview_data_block;
+uniform MultiviewDataBlock multiview_data_block;
 #endif
 
 uniform highp mat4 world_transform;
