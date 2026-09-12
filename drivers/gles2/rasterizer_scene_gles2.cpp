@@ -1754,6 +1754,153 @@ void RasterizerSceneGLES2::_set_scene_state_uniforms() {
 	GLES2::MaterialStorage::get_singleton()->global_shader_parameters_upload_as_uniforms(cache.global_table);
 }
 
+// Member names mirror the GLSL structs in scene.glsl (upload order matches).
+static const char *scene_light_data_members[LIGHT_DATA_MEMBER_COUNT_GLES2] = {
+	"position", "inv_radius", "direction", "size", "color", "attenuation",
+	"cone_attenuation", "cone_angle", "specular_amount", "shadow_opacity",
+	"bake_mode", "area_width", "area_height"
+};
+static const char *scene_directional_light_members[DIRECTIONAL_LIGHT_MEMBER_COUNT_GLES2] = {
+	"direction", "energy", "color", "size", "enabled_bake_mode",
+	"shadow_opacity", "specular", "mask"
+};
+static const char *scene_positional_shadow_members[POSITIONAL_SHADOW_MEMBER_COUNT_GLES2] = {
+	"shadow_matrix", "light_position", "shadow_normal_bias", "shadow_atlas_pixel_size"
+};
+static const char *scene_directional_shadow_members[DIRECTIONAL_SHADOW_MEMBER_COUNT_GLES2] = {
+	"direction", "shadow_atlas_pixel_size", "shadow_normal_bias", "shadow_split_offsets",
+	"shadow_matrix1", "shadow_matrix2", "shadow_matrix3", "shadow_matrix4",
+	"fade_from", "fade_to"
+};
+
+void RasterizerSceneGLES2::_ensure_scene_light_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache) {
+	for (uint32_t i = 0; i < MAX_OMNI_LIGHTS_GLES2; i++) {
+		String base = "omni_lights[" + itos(i) + "].";
+		for (uint32_t m = 0; m < LIGHT_DATA_MEMBER_COUNT_GLES2; m++) {
+			r_cache.omni_lights[i][m] = glGetUniformLocation(p_program, (base + scene_light_data_members[m]).utf8().get_data());
+		}
+	}
+	for (uint32_t i = 0; i < MAX_SPOT_LIGHTS_GLES2; i++) {
+		String base = "spot_lights[" + itos(i) + "].";
+		for (uint32_t m = 0; m < LIGHT_DATA_MEMBER_COUNT_GLES2; m++) {
+			r_cache.spot_lights[i][m] = glGetUniformLocation(p_program, (base + scene_light_data_members[m]).utf8().get_data());
+		}
+	}
+	for (uint32_t i = 0; i < MAX_AREA_LIGHTS_GLES2; i++) {
+		String base = "area_lights[" + itos(i) + "].";
+		for (uint32_t m = 0; m < LIGHT_DATA_MEMBER_COUNT_GLES2; m++) {
+			r_cache.area_lights[i][m] = glGetUniformLocation(p_program, (base + scene_light_data_members[m]).utf8().get_data());
+		}
+	}
+	for (uint32_t i = 0; i < MAX_DIRECTIONAL_LIGHTS; i++) {
+		String base = "directional_lights[" + itos(i) + "].";
+		for (uint32_t m = 0; m < DIRECTIONAL_LIGHT_MEMBER_COUNT_GLES2; m++) {
+			r_cache.directional_lights[i][m] = glGetUniformLocation(p_program, (base + scene_directional_light_members[m]).utf8().get_data());
+		}
+	}
+	for (uint32_t i = 0; i < MAX_POSITIONAL_SHADOWS_GLES2; i++) {
+		String base = "positional_shadows[" + itos(i) + "].";
+		for (uint32_t m = 0; m < POSITIONAL_SHADOW_MEMBER_COUNT_GLES2; m++) {
+			r_cache.positional_shadows[i][m] = glGetUniformLocation(p_program, (base + scene_positional_shadow_members[m]).utf8().get_data());
+		}
+	}
+	for (uint32_t i = 0; i < MAX_DIRECTIONAL_LIGHTS; i++) {
+		String base = "directional_shadows[" + itos(i) + "].";
+		for (uint32_t m = 0; m < DIRECTIONAL_SHADOW_MEMBER_COUNT_GLES2; m++) {
+			r_cache.directional_shadows[i][m] = glGetUniformLocation(p_program, (base + scene_directional_shadow_members[m]).utf8().get_data());
+		}
+	}
+}
+
+void RasterizerSceneGLES2::_upload_scene_light_data(const GLint *p_locations, const RasterizerSceneGLES2::LightData &p_light) {
+	// Order matches scene_light_data_members. GLSL cone_attenuation/cone_angle
+	// map to inv_spot_attenuation/cos_spot_angle. Locations may be -1 when the
+	// array is compiled out; GL ignores those.
+	glUniform3fv(p_locations[0], 1, p_light.position);
+	glUniform1f(p_locations[1], p_light.inv_radius);
+	glUniform3fv(p_locations[2], 1, p_light.direction);
+	glUniform1f(p_locations[3], p_light.size);
+	glUniform3fv(p_locations[4], 1, p_light.color);
+	glUniform1f(p_locations[5], p_light.attenuation);
+	glUniform1f(p_locations[6], p_light.inv_spot_attenuation);
+	glUniform1f(p_locations[7], p_light.cos_spot_angle);
+	glUniform1f(p_locations[8], p_light.specular_amount);
+	glUniform1f(p_locations[9], p_light.shadow_opacity);
+	glUniform1ui(p_locations[10], p_light.bake_mode);
+	glUniform4fv(p_locations[11], 1, p_light.area_width);
+	glUniform4fv(p_locations[12], 1, p_light.area_height);
+}
+
+void RasterizerSceneGLES2::_set_scene_light_uniforms() {
+	GLint current_program = 0;
+	glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+	if (current_program <= 0) {
+		return;
+	}
+	GLuint program = GLuint(current_program);
+	SceneState::ProgramUniforms &cache = scene_state.program_uniforms[program];
+	// Refresh locations once per program (covers re-links); values every frame.
+	if (cache.light_frame == 0) {
+		_ensure_scene_light_uniforms(program, cache);
+	}
+	cache.light_frame = RSG::rasterizer->get_frame_number();
+
+	// Only active slots are uploaded; shader loops are all bounded by the
+	// staged counts, so stale slots are never read.
+	uint32_t omni_count = MIN(scene_state.omni_light_count, (uint32_t)MAX_OMNI_LIGHTS_GLES2);
+	for (uint32_t i = 0; i < omni_count; i++) {
+		_upload_scene_light_data(cache.omni_lights[i], scene_state.omni_lights[i]);
+	}
+	uint32_t spot_count = MIN(scene_state.spot_light_count, (uint32_t)MAX_SPOT_LIGHTS_GLES2);
+	for (uint32_t i = 0; i < spot_count; i++) {
+		_upload_scene_light_data(cache.spot_lights[i], scene_state.spot_lights[i]);
+	}
+	uint32_t area_count = MIN(scene_state.area_light_count, (uint32_t)MAX_AREA_LIGHTS_GLES2);
+	for (uint32_t i = 0; i < area_count; i++) {
+		_upload_scene_light_data(cache.area_lights[i], scene_state.area_lights[i]);
+	}
+
+	// Directional lights/shadows are indexed from the top for shadowed entries,
+	// so upload all slots; only active ones are read.
+	for (uint32_t i = 0; i < MAX_DIRECTIONAL_LIGHTS; i++) {
+		const DirectionalLightData &dl = scene_state.directional_lights[i];
+		const GLint *loc = cache.directional_lights[i];
+		glUniform3fv(loc[0], 1, dl.direction);
+		glUniform1f(loc[1], dl.energy);
+		glUniform3fv(loc[2], 1, dl.color);
+		glUniform1f(loc[3], dl.size);
+		glUniform1ui(loc[4], (dl.enabled ? 1u : 0u) | (dl.bake_mode << 1));
+		glUniform1f(loc[5], dl.shadow_opacity);
+		glUniform1f(loc[6], dl.specular);
+		glUniform1ui(loc[7], dl.mask);
+	}
+
+	uint32_t pshadow_count = MIN(scene_state.positional_shadow_count, (uint32_t)MAX_POSITIONAL_SHADOWS_GLES2);
+	for (uint32_t i = 0; i < pshadow_count; i++) {
+		const ShadowData &sd = scene_state.positional_shadows[i];
+		const GLint *loc = cache.positional_shadows[i];
+		glUniformMatrix4fv(loc[0], 1, GL_FALSE, sd.shadow_matrix);
+		glUniform3fv(loc[1], 1, sd.light_position);
+		glUniform1f(loc[2], sd.shadow_normal_bias);
+		glUniform1f(loc[3], sd.shadow_atlas_pixel_size);
+	}
+
+	for (uint32_t i = 0; i < MAX_DIRECTIONAL_LIGHTS; i++) {
+		const DirectionalShadowData &sd = scene_state.directional_shadows[i];
+		const GLint *loc = cache.directional_shadows[i];
+		glUniform3fv(loc[0], 1, sd.direction);
+		glUniform1f(loc[1], sd.shadow_atlas_pixel_size);
+		glUniform4fv(loc[2], 1, sd.shadow_normal_bias);
+		glUniform4fv(loc[3], 1, sd.shadow_split_offsets);
+		glUniformMatrix4fv(loc[4], 1, GL_FALSE, sd.shadow_matrices[0]);
+		glUniformMatrix4fv(loc[5], 1, GL_FALSE, sd.shadow_matrices[1]);
+		glUniformMatrix4fv(loc[6], 1, GL_FALSE, sd.shadow_matrices[2]);
+		glUniformMatrix4fv(loc[7], 1, GL_FALSE, sd.shadow_matrices[3]);
+		glUniform1f(loc[8], sd.fade_from);
+		glUniform1f(loc[9], sd.fade_to);
+	}
+}
+
 void RasterizerSceneGLES2::_set_sky_uniforms() {
 	GLint current_program = 0;
 	glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
@@ -2085,7 +2232,7 @@ void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, b
 				r_directional_light_count++;
 			} break;
 			case RSE::LIGHT_OMNI: {
-				if (r_omni_light_count >= (uint32_t)config->max_renderable_lights) {
+				if (r_omni_light_count >= MAX_OMNI_LIGHTS_GLES2) {
 					continue;
 				}
 
@@ -2108,7 +2255,7 @@ void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, b
 				r_omni_light_count++;
 			} break;
 			case RSE::LIGHT_SPOT: {
-				if (r_spot_light_count >= (uint32_t)config->max_renderable_lights) {
+				if (r_spot_light_count >= MAX_SPOT_LIGHTS_GLES2) {
 					continue;
 				}
 
@@ -2131,7 +2278,7 @@ void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, b
 				r_spot_light_count++;
 			} break;
 			case RSE::LIGHT_AREA: {
-				if (r_area_light_count >= (uint32_t)config->max_renderable_lights) {
+				if (r_area_light_count >= MAX_AREA_LIGHTS_GLES2) {
 					continue;
 				}
 
@@ -2332,7 +2479,7 @@ void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, b
 
 		// Fill in the shadow information.
 		if (needs_shadow && in_shadow_range) {
-			if (num_positional_shadows >= config->max_renderable_lights) {
+			if (num_positional_shadows >= MAX_POSITIONAL_SHADOWS_GLES2) {
 				continue;
 			}
 			ShadowData &shadow_data = scene_state.positional_shadows[num_positional_shadows];
@@ -2372,38 +2519,15 @@ void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, b
 		}
 	}
 
-	// TODO, to avoid stalls, should rotate between 3 buffers based on frame index.
-	// TODO, consider mapping the buffer as in 2D
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_OMNILIGHT_UNIFORM_LOCATION_GLES2, scene_state.omni_light_buffer);
-	if (r_omni_light_count) {
-		glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightData) * r_omni_light_count, scene_state.omni_lights);
-	}
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_SPOTLIGHT_UNIFORM_LOCATION_GLES2, scene_state.spot_light_buffer);
-	if (r_spot_light_count) {
-		glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightData) * r_spot_light_count, scene_state.spot_lights);
-	}
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_AREALIGHT_UNIFORM_LOCATION_GLES2, scene_state.area_light_buffer);
-	if (r_area_light_count) {
-		glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightData) * r_area_light_count, scene_state.area_lights);
-	}
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_DIRECTIONAL_LIGHT_UNIFORM_LOCATION_GLES2, scene_state.directional_light_buffer);
-	if (r_directional_light_count) {
-		glBufferData(GL_UNIFORM_BUFFER, sizeof(DirectionalLightData) * MAX_DIRECTIONAL_LIGHTS, scene_state.directional_lights, GL_STREAM_DRAW);
-	}
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_POSITIONAL_SHADOW_UNIFORM_LOCATION_GLES2, scene_state.positional_shadow_buffer);
-	if (num_positional_shadows) {
-		glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(ShadowData) * num_positional_shadows, scene_state.positional_shadows);
-	}
-
-	glBindBufferBase(GL_UNIFORM_BUFFER, SCENE_DIRECTIONAL_SHADOW_UNIFORM_LOCATION_GLES2, scene_state.directional_shadow_buffer);
-	if (r_directional_shadow_count) {
-		glBufferData(GL_UNIFORM_BUFFER, sizeof(DirectionalShadowData) * MAX_DIRECTIONAL_LIGHTS, scene_state.directional_shadows, GL_STREAM_DRAW);
-	}
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
+	// GLES2 simplification: 3D light/shadow arrays are plain uniforms uploaded
+	// per program (see _set_scene_light_uniforms); no UBO upload. Persist the
+	// staged counts for the upload.
+	scene_state.omni_light_count = r_omni_light_count;
+	scene_state.spot_light_count = r_spot_light_count;
+	scene_state.area_light_count = r_area_light_count;
+	scene_state.directional_light_count = r_directional_light_count;
+	scene_state.directional_shadow_count = r_directional_shadow_count;
+	scene_state.positional_shadow_count = num_positional_shadows;
 }
 
 // Render shadows
@@ -3953,6 +4077,7 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 
 			// GLES2 simplification: 3D state as plain uniforms (no UBOs).
 			_set_scene_state_uniforms();
+			_set_scene_light_uniforms();
 
 			// GLES2 simplification: material uniforms as plain variables (no UBO).
 			if (material_data) {
@@ -4802,48 +4927,23 @@ RasterizerSceneGLES2::RasterizerSceneGLES2() {
 
 	{
 		// Setup Lights
+		// GLES2 simplification (low-end 3D): small CPU-side staging arrays with
+		// the SceneLightCapGLES2 caps; uploads are plain uniforms per program
+		// (see _set_scene_light_uniforms), so no GL buffers and no UBO sizing.
+		scene_state.omni_lights = memnew_arr(LightData, MAX_OMNI_LIGHTS_GLES2);
+		scene_state.omni_light_sort = memnew_arr(InstanceSort<GLES2::LightInstance>, MAX_OMNI_LIGHTS_GLES2);
 
-		config->max_renderable_lights = MIN(config->max_renderable_lights, config->max_uniform_buffer_size / (int)sizeof(RasterizerSceneGLES2::LightData));
-		config->max_lights_per_object = MIN(config->max_lights_per_object, config->max_renderable_lights);
+		scene_state.spot_lights = memnew_arr(LightData, MAX_SPOT_LIGHTS_GLES2);
+		scene_state.spot_light_sort = memnew_arr(InstanceSort<GLES2::LightInstance>, MAX_SPOT_LIGHTS_GLES2);
 
-		uint32_t light_buffer_size = config->max_renderable_lights * sizeof(LightData);
-		scene_state.omni_lights = memnew_arr(LightData, config->max_renderable_lights);
-		scene_state.omni_light_sort = memnew_arr(InstanceSort<GLES2::LightInstance>, config->max_renderable_lights);
-		glGenBuffers(1, &scene_state.omni_light_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, scene_state.omni_light_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.omni_light_buffer, light_buffer_size, nullptr, GL_STREAM_DRAW, "OmniLight UBO");
+		scene_state.area_lights = memnew_arr(LightData, MAX_AREA_LIGHTS_GLES2);
+		scene_state.area_light_sort = memnew_arr(InstanceSort<GLES2::LightInstance>, MAX_AREA_LIGHTS_GLES2);
 
-		scene_state.spot_lights = memnew_arr(LightData, config->max_renderable_lights);
-		scene_state.spot_light_sort = memnew_arr(InstanceSort<GLES2::LightInstance>, config->max_renderable_lights);
-		glGenBuffers(1, &scene_state.spot_light_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, scene_state.spot_light_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.spot_light_buffer, light_buffer_size, nullptr, GL_STREAM_DRAW, "SpotLight UBO");
-
-		scene_state.area_lights = memnew_arr(LightData, config->max_renderable_lights);
-		scene_state.area_light_sort = memnew_arr(InstanceSort<GLES2::LightInstance>, config->max_renderable_lights);
-		glGenBuffers(1, &scene_state.area_light_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, scene_state.area_light_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.area_light_buffer, light_buffer_size, nullptr, GL_STREAM_DRAW, "AreaLight UBO");
-
-		uint32_t directional_light_buffer_size = MAX_DIRECTIONAL_LIGHTS * sizeof(DirectionalLightData);
 		scene_state.directional_lights = memnew_arr(DirectionalLightData, MAX_DIRECTIONAL_LIGHTS);
-		glGenBuffers(1, &scene_state.directional_light_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, scene_state.directional_light_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.directional_light_buffer, directional_light_buffer_size, nullptr, GL_STREAM_DRAW, "DirectionalLight UBO");
 
-		uint32_t shadow_buffer_size = config->max_renderable_lights * sizeof(ShadowData) * 2;
-		scene_state.positional_shadows = memnew_arr(ShadowData, config->max_renderable_lights * 2);
-		glGenBuffers(1, &scene_state.positional_shadow_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, scene_state.positional_shadow_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.positional_shadow_buffer, shadow_buffer_size, nullptr, GL_STREAM_DRAW, "Positional Shadow UBO");
+		scene_state.positional_shadows = memnew_arr(ShadowData, MAX_POSITIONAL_SHADOWS_GLES2);
 
-		uint32_t directional_shadow_buffer_size = MAX_DIRECTIONAL_LIGHTS * sizeof(DirectionalShadowData);
 		scene_state.directional_shadows = memnew_arr(DirectionalShadowData, MAX_DIRECTIONAL_LIGHTS);
-		glGenBuffers(1, &scene_state.directional_shadow_buffer);
-		glBindBuffer(GL_UNIFORM_BUFFER, scene_state.directional_shadow_buffer);
-		GLES2::Utilities::get_singleton()->buffer_allocate_data(GL_UNIFORM_BUFFER, scene_state.directional_shadow_buffer, directional_shadow_buffer_size, nullptr, GL_STREAM_DRAW, "Directional Shadow UBO");
-
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
 	}
 
 	{
@@ -4857,7 +4957,12 @@ RasterizerSceneGLES2::RasterizerSceneGLES2() {
 	{
 		String global_defines;
 		global_defines += "#define MAX_GLOBAL_SHADER_UNIFORMS 256\n"; // TODO: this is arbitrary for now
-		global_defines += "\n#define MAX_LIGHT_DATA_STRUCTS " + itos(config->max_renderable_lights) + "\n";
+		// GLES2 simplification (low-end 3D): small plain-array caps instead of
+		// the large UBO-sized MAX_LIGHT_DATA_STRUCTS.
+		global_defines += "\n#define MAX_OMNI_LIGHTS " + itos(MAX_OMNI_LIGHTS_GLES2) + "\n";
+		global_defines += "\n#define MAX_SPOT_LIGHTS " + itos(MAX_SPOT_LIGHTS_GLES2) + "\n";
+		global_defines += "\n#define MAX_AREA_LIGHTS " + itos(MAX_AREA_LIGHTS_GLES2) + "\n";
+		global_defines += "\n#define MAX_POSITIONAL_SHADOWS " + itos(MAX_POSITIONAL_SHADOWS_GLES2) + "\n";
 		global_defines += "\n#define MAX_DIRECTIONAL_LIGHT_DATA_STRUCTS " + itos(MAX_DIRECTIONAL_LIGHTS) + "\n";
 		global_defines += "\n#define MAX_FORWARD_LIGHTS " + itos(config->max_lights_per_object) + "u\n";
 		global_defines += "\n#define MAX_ROUGHNESS_LOD " + itos(sky_globals.roughness_layers - 1) + ".0\n";
@@ -5011,12 +5116,7 @@ RasterizerSceneGLES2::~RasterizerSceneGLES2() {
 		RS::get_singleton()->free_rid(ltc.lut2_texture);
 	}
 
-	GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.directional_light_buffer);
-	GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.omni_light_buffer);
-	GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.spot_light_buffer);
-	GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.area_light_buffer);
-	GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.positional_shadow_buffer);
-	GLES2::Utilities::get_singleton()->buffer_free_data(scene_state.directional_shadow_buffer);
+	// GLES2 simplification: no light/shadow GL buffers (plain uniforms).
 	memdelete_arr(scene_state.directional_lights);
 	memdelete_arr(scene_state.omni_lights);
 	memdelete_arr(scene_state.spot_lights);

@@ -60,6 +60,20 @@ enum PassModeGLES2 {
 	PASS_MODE_MOTION_VECTORS_GLES2,
 };
 
+// GLES2 simplification (low-end 3D): 3D light/shadow UBOs are plain uniform
+// arrays with small caps (mirrors the canvas light cap). Extra scene lights
+// beyond these caps are ignored.
+enum SceneLightCapGLES2 {
+	MAX_OMNI_LIGHTS_GLES2 = 8,
+	MAX_SPOT_LIGHTS_GLES2 = 8,
+	MAX_AREA_LIGHTS_GLES2 = 4,
+	MAX_POSITIONAL_SHADOWS_GLES2 = 16,
+	LIGHT_DATA_MEMBER_COUNT_GLES2 = 13, // position, inv_radius, direction, size, color, attenuation, cone_attenuation, cone_angle, specular_amount, shadow_opacity, bake_mode, area_width, area_height
+	DIRECTIONAL_LIGHT_MEMBER_COUNT_GLES2 = 8, // direction, energy, color, size, enabled_bake_mode, shadow_opacity, specular, mask
+	POSITIONAL_SHADOW_MEMBER_COUNT_GLES2 = 4, // shadow_matrix, light_position, shadow_normal_bias, shadow_atlas_pixel_size
+	DIRECTIONAL_SHADOW_MEMBER_COUNT_GLES2 = 10, // direction, shadow_atlas_pixel_size, shadow_normal_bias, shadow_split_offsets, shadow_matrix1-4, fade_from, fade_to
+};
+
 // These should share as much as possible with SkyUniform Location
 enum SceneUniformLocationGLES2 {
 	SCENE_TONEMAP_UNIFORM_LOCATION_GLES2,
@@ -585,7 +599,16 @@ private:
 			GLint sky_mv_projection_matrix_view = -1;
 			GLint sky_mv_inv_projection_matrix_view = -1;
 			GLint sky_mv_eye_offset = -1;
+			// 3D light/shadow plain arrays, indexed [light][member]. Member
+			// order mirrors the GLSL structs (see _ensure_scene_light_uniforms).
+			GLint omni_lights[MAX_OMNI_LIGHTS_GLES2][LIGHT_DATA_MEMBER_COUNT_GLES2];
+			GLint spot_lights[MAX_SPOT_LIGHTS_GLES2][LIGHT_DATA_MEMBER_COUNT_GLES2];
+			GLint area_lights[MAX_AREA_LIGHTS_GLES2][LIGHT_DATA_MEMBER_COUNT_GLES2];
+			GLint directional_lights[MAX_DIRECTIONAL_LIGHTS][DIRECTIONAL_LIGHT_MEMBER_COUNT_GLES2];
+			GLint positional_shadows[MAX_POSITIONAL_SHADOWS_GLES2][POSITIONAL_SHADOW_MEMBER_COUNT_GLES2];
+			GLint directional_shadows[MAX_DIRECTIONAL_LIGHTS][DIRECTIONAL_SHADOW_MEMBER_COUNT_GLES2];
 			uint64_t frame = 0;
+			uint64_t light_frame = 0;
 		};
 		HashMap<GLuint, ProgramUniforms> program_uniforms;
 
@@ -752,19 +775,17 @@ private:
 		InstanceSort<GLES2::LightInstance> *omni_light_sort;
 		InstanceSort<GLES2::LightInstance> *spot_light_sort;
 		InstanceSort<GLES2::LightInstance> *area_light_sort;
-		GLuint omni_light_buffer = 0;
-		GLuint spot_light_buffer = 0;
-		GLuint area_light_buffer = 0;
-		GLuint positional_shadow_buffer = 0;
+		// GLES2 simplification: no light/shadow GL buffers (plain uniforms).
 		uint32_t omni_light_count = 0;
 		uint32_t spot_light_count = 0;
 		uint32_t area_light_count = 0;
+		uint32_t directional_light_count = 0;
+		uint32_t directional_shadow_count = 0;
+		uint32_t positional_shadow_count = 0;
 		RSE::ShadowQuality positional_shadow_quality = RSE::ShadowQuality::SHADOW_QUALITY_SOFT_LOW;
 
 		DirectionalLightData *directional_lights = nullptr;
-		GLuint directional_light_buffer = 0;
 		DirectionalShadowData *directional_shadows = nullptr;
-		GLuint directional_shadow_buffer = 0;
 		RSE::ShadowQuality directional_shadow_quality = RSE::ShadowQuality::SHADOW_QUALITY_SOFT_LOW;
 	} scene_state;
 
@@ -848,6 +869,9 @@ private:
 	// per frame. Locations are cached in program_uniforms.
 	void _ensure_scene_program_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache);
 	void _set_scene_state_uniforms();
+	void _ensure_scene_light_uniforms(GLuint p_program, SceneState::ProgramUniforms &r_cache);
+	static void _upload_scene_light_data(const GLint *p_locations, const LightData &p_light);
+	void _set_scene_light_uniforms();
 	void _set_sky_uniforms();
 
 	void _setup_lights(const RenderDataGLES2 *p_render_data, bool p_using_shadows, uint32_t &r_directional_light_count, uint32_t &r_omni_light_count, uint32_t &r_spot_light_count, uint32_t &r_area_light_count, uint32_t &r_directional_shadow_count);
