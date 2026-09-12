@@ -2095,7 +2095,6 @@ void RasterizerSceneGLES2::_setup_environment(const RenderDataGLES2 *p_render_da
 // Puts lights into Uniform Buffers. Needs to be called before _fill_list as this caches the index of each light in the Uniform Buffer
 void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, bool p_using_shadows, uint32_t &r_directional_light_count, uint32_t &r_omni_light_count, uint32_t &r_spot_light_count, uint32_t &r_area_light_count, uint32_t &r_directional_shadow_count) {
 	GLES2::LightStorage *light_storage = GLES2::LightStorage::get_singleton();
-	GLES2::Config *config = GLES2::Config::get_singleton();
 
 	const Transform3D inverse_transform = p_render_data->inv_cam_transform;
 

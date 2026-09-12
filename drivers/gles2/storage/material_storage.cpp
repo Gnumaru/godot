@@ -1819,7 +1819,7 @@ void MaterialStorage::global_shader_parameters_upload_as_uniforms(GLint p_locati
 	}
 	// Matches the hardcoded MAX_GLOBAL_SHADER_UNIFORMS canvas define.
 	const int table_size = 256;
-	const int count = MIN(global_shader_uniforms.buffer_size, table_size);
+	const int count = MIN(int(global_shader_uniforms.buffer_size), table_size);
 	glUniform4fv(p_location, count, (const GLfloat *)global_shader_uniforms.buffer_values);
 }
 

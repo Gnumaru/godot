@@ -1297,7 +1297,7 @@ bool MeshStorage::_mesh_instance_process_software(MeshInstance *p_mi, Skeleton *
 	const bool has_normal = (s->format & (1ULL << RSE::ARRAY_NORMAL)) && !p_array_is_2d;
 	const bool has_tangent = (s->format & (1ULL << RSE::ARRAY_TANGENT)) && !p_array_is_2d;
 	const uint32_t blend_count = p_mi->mesh->blend_shape_count;
-	if (blend_count > 0 && s->blend_shape_data_cpu.size() < size_t(blend_count) * size_t(s->vertex_data_cpu.size())) {
+	if (blend_count > 0 && size_t(s->blend_shape_data_cpu.size()) < size_t(blend_count) * size_t(s->vertex_data_cpu.size())) {
 		return false;
 	}
 
