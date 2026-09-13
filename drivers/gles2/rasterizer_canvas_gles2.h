@@ -386,6 +386,8 @@ public:
 	void _allocate_instance_data_buffer();
 	void _allocate_instance_buffer();
 	void _enable_attributes(uint32_t p_start, bool p_primitive, uint32_t p_rate = 1);
+	// GLES2 simplification: manual vertex setup for ES 2.0 (no VAOs).
+	void _bind_quad_arrays_es2(GLuint p_vertex_buffer, GLuint p_index_buffer);
 
 	void set_time(double p_time);
 

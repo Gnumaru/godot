@@ -1461,13 +1461,19 @@ void RasterizerCanvasGLES2::_render_batch(Light *p_lights, uint32_t p_index, Ren
 	switch (state.canvas_instance_batches[p_index].command_type) {
 		case Item::Command::TYPE_RECT:
 		case Item::Command::TYPE_NINEPATCH: {
-			glBindVertexArray(data.indexed_quad_array);
+			if (RasterizerUtilGLES2::is_gles2()) {
+				_bind_quad_arrays_es2(data.canvas_quad_vertices, data.indexed_quad_buffer);
+			} else {
+				glBindVertexArray(data.indexed_quad_array);
+			}
 			glBindBuffer(GL_ARRAY_BUFFER, state.canvas_instance_data_buffers[state.current_data_buffer_index].instance_buffers[state.canvas_instance_batches[p_index].instance_buffer_index]);
 			uint32_t range_start = state.canvas_instance_batches[p_index].start * sizeof(InstanceData);
 			_enable_attributes(range_start, false);
 
 			glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr, state.canvas_instance_batches[p_index].instance_count);
-			glBindVertexArray(0);
+			if (!RasterizerUtilGLES2::is_gles2()) {
+				glBindVertexArray(0);
+			}
 
 			if (r_render_info) {
 				r_render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_CANVAS][RSE::VIEWPORT_RENDER_INFO_OBJECTS_IN_FRAME] += state.canvas_instance_batches[p_index].instance_count;
@@ -1513,7 +1519,11 @@ void RasterizerCanvasGLES2::_render_batch(Light *p_lights, uint32_t p_index, Ren
 		} break;
 
 		case Item::Command::TYPE_PRIMITIVE: {
-			glBindVertexArray(data.canvas_quad_array);
+			if (RasterizerUtilGLES2::is_gles2()) {
+				_bind_quad_arrays_es2(data.canvas_quad_vertices, 0);
+			} else {
+				glBindVertexArray(data.canvas_quad_array);
+			}
 			glBindBuffer(GL_ARRAY_BUFFER, state.canvas_instance_data_buffers[state.current_data_buffer_index].instance_buffers[state.canvas_instance_batches[p_index].instance_buffer_index]);
 			uint32_t range_start = state.canvas_instance_batches[p_index].start * sizeof(InstanceData);
 			_enable_attributes(range_start, true);
@@ -1743,6 +1753,21 @@ void RasterizerCanvasGLES2::_new_batch(bool &r_batch_broken) {
 	new_batch.instance_buffer_index = state.current_instance_buffer_index;
 	state.current_batch_index++;
 	state.canvas_instance_batches.push_back(new_batch);
+}
+
+void RasterizerCanvasGLES2::_bind_quad_arrays_es2(GLuint p_vertex_buffer, GLuint p_index_buffer) {
+	// Locations 8-15 come from _enable_attributes (instance buffer); location 0
+	// carries quad corners here. Other vertex slots are disabled so no stale
+	// arrays feed the draw (VAOs encapsulated this on ES3).
+	glBindBuffer(GL_ARRAY_BUFFER, p_vertex_buffer);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+	glEnableVertexAttribArray(0);
+	for (int i = 1; i < 8; i++) {
+		glDisableVertexAttribArray(i);
+	}
+	if (p_index_buffer != 0) {
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, p_index_buffer);
+	}
 }
 
 void RasterizerCanvasGLES2::_enable_attributes(uint32_t p_start, bool p_primitive, uint32_t p_rate) {
