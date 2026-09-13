@@ -63,6 +63,8 @@ vec2 godot_unpackSnorm2x16(uint p) {
 #endif // USE_HALF2FLOAT
 
 // Always expose these as they are ES310 functions and not available in ES300 or GLSL 330.
+#ifndef USE_GLES2_ES2
+// (ES 2.0 has no uint/bit ops; canvas unpacks on the CPU side instead.)
 
 uint godot_packUnorm4x8(vec4 v) {
 	uvec4 uv = uvec4(round(clamp(v, vec4(0.0), vec4(1.0)) * 255.0));
@@ -87,3 +89,4 @@ vec4 godot_unpackSnorm4x8(uint p) {
 #define unpackUnorm4x8 godot_unpackUnorm4x8
 #define packSnorm4x8 godot_packSnorm4x8
 #define unpackSnorm4x8 godot_unpackSnorm4x8
+#endif // !USE_GLES2_ES2

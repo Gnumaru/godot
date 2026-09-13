@@ -284,6 +284,10 @@ Config::Config() {
 	if (OS::get_singleton()->get_current_rendering_driver_name() == "opengl2_angle") {
 		polyfill_half2float = false;
 	}
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: the polyfill uses uint/bit ops (ES3-only).
+		polyfill_half2float = false;
+	}
 #ifdef WEB_ENABLED
 	polyfill_half2float = false;
 #endif

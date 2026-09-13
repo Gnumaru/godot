@@ -56,7 +56,16 @@ static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage
 		return p_line;
 	}
 
+	// Strip trailing comments for analysis (GLSL has no // operator, so the
+	// first // always starts a comment; output keeps 1:1 line mapping).
 	String rest = stripped;
+	int comment_pos = rest.find("//");
+	if (comment_pos != -1) {
+		rest = rest.substr(0, comment_pos).strip_edges();
+	}
+	if (rest.is_empty()) {
+		return p_line;
+	}
 	if (rest.begins_with("layout")) {
 		// layout(location = N) in/out ... ;  (multiview "layout(num_views=2) in;"
 		// has no parens content we care about; leave unknown layouts alone).
@@ -264,6 +273,11 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 		// chunks are translated below; unported 300-es types fail as expected.
 		builder.append("#version 100\n");
 		builder.append("#define USE_GLES2_ES2\n");
+		if (GLES2::Config::get_singleton()->extensions.has("GL_OES_standard_derivatives")) {
+			// Needed for fwidth() (MSDF text); ubiquitous, but gated anyway.
+			// Must precede any non-preprocessor statement (incl. precision).
+			builder.append("#extension GL_OES_standard_derivatives : enable\n");
+		}
 		builder.append("precision highp float;\nprecision highp int;\n");
 	} else {
 		builder.append("#version 300 es\n");

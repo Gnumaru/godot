@@ -105,8 +105,19 @@ void RasterizerCanvasGLES2::_update_transform_to_mat4(const Transform3D &p_trans
 	p_mat4[15] = 1;
 }
 
-void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_item_list, const Color &p_modulate, Light *p_light_list, Light *p_directional_light_list, const Transform2D &p_canvas_transform, RSE::CanvasItemTextureFilter p_default_filter, RSE::CanvasItemTextureRepeat p_default_repeat, bool p_snap_2d_vertices_to_pixel, bool &r_sdf_used, RenderingServerTypes::RenderInfo *r_render_info) {
-	GLES2::TextureStorage *texture_storage = GLES2::TextureStorage::get_singleton();
+// GLES2 simplification: on ES 2.0 the instance flags slot already holds repacked
+// lo/hi floats (see below), so set bits by addition (fields start at zero and
+// each is set once per item; all values are exactly representable as floats).
+static _FORCE_INLINE_ void _instance_data_flags_or(RasterizerCanvasGLES2::InstanceData *r_data, uint32_t p_bits) {
+	if (RasterizerUtilGLES2::is_gles2()) {
+		float *fp = (float *)&r_data->flags;
+		fp[0] += float(p_bits);
+	} else {
+		r_data->flags |= p_bits;
+	}
+}
+
+void RasterizerCanvasGLES2::canvas_render_items(RID p_to_render_target, Item *p_item_list, const Color &p_modulate, Light *p_light_list, Light *p_directional_light_list, const Transform2D &p_canvas_transform, RSE::CanvasItemTextureFilter p_default_filter, RSE::CanvasItemTextureRepeat p_default_repeat, bool p_snap_2d_vertices_to_pixel, bool &r_sdf_used, RenderingServerTypes::RenderInfo *r_render_info) {	GLES2::TextureStorage *texture_storage = GLES2::TextureStorage::get_singleton();
 	GLES2::MaterialStorage *material_storage = GLES2::MaterialStorage::get_singleton();
 	GLES2::MeshStorage *mesh_storage = GLES2::MeshStorage::get_singleton();
 
@@ -705,8 +716,13 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 		}
 
 		// Bind per-batch uniforms.
-		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::BATCH_FLAGS, state.canvas_instance_batches[i].flags, shader_version, variant, specialization);
-		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SPECULAR_SHININESS_IN, state.canvas_instance_batches[i].specular_shininess, shader_version, variant, specialization);
+		// GLES2 simplification: batch flags/counts are plain int uniforms.
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::BATCH_FLAGS, int32_t(state.canvas_instance_batches[i].flags), shader_version, variant, specialization);
+		{
+			uint32_t sh = state.canvas_instance_batches[i].specular_shininess;
+			Vector4 sh_v(float(sh & 0xFF) * (1.0f / 255.0f), float((sh >> 8) & 0xFF) * (1.0f / 255.0f), float((sh >> 16) & 0xFF) * (1.0f / 255.0f), float((sh >> 24) & 0xFF) * (1.0f / 255.0f));
+			material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SPECULAR_SHININESS_IN, sh_v, shader_version, variant, specialization);
+		}
 
 		// GLES2 simplification: CanvasData as plain uniforms (no UBO).
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::CANVAS_TRANSFORM, state.canvas_transform_state, shader_version, variant, specialization);
@@ -719,7 +735,7 @@ void RasterizerCanvasGLES2::_render_items(RID p_to_render_target, int p_item_cou
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SDF_TO_TEX, state.sdf_to_tex_state[0], state.sdf_to_tex_state[1], state.sdf_to_tex_state[2], state.sdf_to_tex_state[3], shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SCREEN_TO_SDF, state.screen_to_sdf_state[0], state.screen_to_sdf_state[1], shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::SDF_TO_SCREEN, state.sdf_to_screen_state[0], state.sdf_to_screen_state[1], shader_version, variant, specialization);
-		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::DIRECTIONAL_LIGHT_COUNT, state.directional_light_count_state, shader_version, variant, specialization);
+		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::DIRECTIONAL_LIGHT_COUNT, int32_t(state.directional_light_count_state), shader_version, variant, specialization);
 		material_storage->shaders.canvas_shader.version_set_uniform(CanvasShaderGLES2::TEX_TO_SDF, state.tex_to_sdf_state, shader_version, variant, specialization);
 
 		// GLES2 simplification: 2D lights as plain uniforms (no UBO).
@@ -873,7 +889,10 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 
 				light_count++;
 
-				if (light_count == data.max_lights_per_item - 1) {
+				// GLES2 simplification: ES 2.0 carries 8 light indices per item
+				// (4 float pairs); the rest would not fit the varyings.
+				const uint16_t max_item_lights = RasterizerUtilGLES2::is_gles2() ? 8 : data.max_lights_per_item - 1;
+				if (light_count == max_item_lights) {
 					break;
 				}
 			}
@@ -920,7 +939,21 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 		state.instance_data_array[r_index].lights[2] = lights[2];
 		state.instance_data_array[r_index].lights[3] = lights[3];
 
-		state.instance_data_array[r_index].flags = base_flags;
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// GLES2 simplification: repack the 8 indices as 4 float pairs
+			// (see the omni loop in canvas.glsl); flags split lo/hi.
+			float *lp = (float *)state.instance_data_array[r_index].lights;
+			for (int k = 0; k < 2; k++) {
+				uint32_t packed = lights[k];
+				lp[2 * k] = float((packed & 0xFF) * 256 + ((packed >> 8) & 0xFF));
+				lp[2 * k + 1] = float(((packed >> 16) & 0xFF) * 256 + ((packed >> 24) & 0xFF));
+			}
+			float *fp = (float *)&state.instance_data_array[r_index].flags;
+			fp[0] = float(base_flags & 0x1FFF);
+			fp[1] = float(base_flags >> 13);
+		} else {
+			state.instance_data_array[r_index].flags = base_flags;
+		}
 		state.instance_data_array[r_index].instance_uniforms_ofs = p_item->instance_allocated_shader_uniforms_offset;
 
 		Color blend_color = base_color;
@@ -987,11 +1020,11 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 					}
 
 					if (rect->flags & CANVAS_RECT_TRANSPOSE) {
-						state.instance_data_array[r_index].flags |= INSTANCE_FLAGS_TRANSPOSE_RECT;
+						_instance_data_flags_or(&state.instance_data_array[r_index], INSTANCE_FLAGS_TRANSPOSE_RECT);
 					}
 
 					if (rect->flags & CANVAS_RECT_CLIP_UV) {
-						state.instance_data_array[r_index].flags |= INSTANCE_FLAGS_CLIP_RECT_UV;
+						_instance_data_flags_or(&state.instance_data_array[r_index], INSTANCE_FLAGS_CLIP_RECT_UV);
 					}
 
 				} else {
@@ -1010,13 +1043,13 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 				}
 
 				if (rect->flags & CANVAS_RECT_MSDF) {
-					state.instance_data_array[r_index].flags |= INSTANCE_FLAGS_USE_MSDF;
+					_instance_data_flags_or(&state.instance_data_array[r_index], INSTANCE_FLAGS_USE_MSDF);
 					state.instance_data_array[r_index].msdf[0] = rect->px_range; // Pixel range.
 					state.instance_data_array[r_index].msdf[1] = rect->outline; // Outline size.
 					state.instance_data_array[r_index].msdf[2] = 0.f; // Reserved.
 					state.instance_data_array[r_index].msdf[3] = 0.f; // Reserved.
 				} else if (rect->flags & CANVAS_RECT_LCD) {
-					state.instance_data_array[r_index].flags |= INSTANCE_FLAGS_USE_LCD;
+					_instance_data_flags_or(&state.instance_data_array[r_index], INSTANCE_FLAGS_USE_LCD);
 				}
 
 				state.instance_data_array[r_index].modulation[0] = rect->modulate.r * base_color.r;
@@ -1085,11 +1118,11 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 				state.instance_data_array[r_index].dst_rect[2] = dst_rect.size.width;
 				state.instance_data_array[r_index].dst_rect[3] = dst_rect.size.height;
 
-				state.instance_data_array[r_index].flags |= int(np->axis_x) << INSTANCE_FLAGS_NINEPATCH_H_MODE_SHIFT;
-				state.instance_data_array[r_index].flags |= int(np->axis_y) << INSTANCE_FLAGS_NINEPATCH_V_MODE_SHIFT;
+				_instance_data_flags_or(&state.instance_data_array[r_index], uint32_t(int(np->axis_x) << INSTANCE_FLAGS_NINEPATCH_H_MODE_SHIFT));
+				_instance_data_flags_or(&state.instance_data_array[r_index], uint32_t(int(np->axis_y) << INSTANCE_FLAGS_NINEPATCH_V_MODE_SHIFT));
 
 				if (np->draw_center) {
-					state.instance_data_array[r_index].flags |= INSTANCE_FLAGS_NINEPACH_DRAW_CENTER;
+					_instance_data_flags_or(&state.instance_data_array[r_index], INSTANCE_FLAGS_NINEPACH_DRAW_CENTER);
 				}
 
 				state.instance_data_array[r_index].ninepatch_margins[0] = np->margin[SIDE_LEFT];
@@ -1155,8 +1188,15 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 					state.instance_data_array[r_index].uvs[j * 2 + 0] = primitive->uvs[j].x;
 					state.instance_data_array[r_index].uvs[j * 2 + 1] = primitive->uvs[j].y;
 					Color col = primitive->colors[j] * base_color;
-					state.instance_data_array[r_index].colors[j * 2 + 0] = (uint32_t(Math::make_half_float(col.g)) << 16) | Math::make_half_float(col.r);
-					state.instance_data_array[r_index].colors[j * 2 + 1] = (uint32_t(Math::make_half_float(col.a)) << 16) | Math::make_half_float(col.b);
+					if (RasterizerUtilGLES2::is_gles2()) {
+						// GLES2 simplification: 8-bit RG/BA pairs (see unpack_rg_ba).
+						float *cp = (float *)state.instance_data_array[r_index].colors;
+						cp[j * 2 + 0] = float(uint32_t(CLAMP(col.r * 255.0f, 0.0f, 255.0f)) * 256 + uint32_t(CLAMP(col.g * 255.0f, 0.0f, 255.0f)));
+						cp[j * 2 + 1] = float(uint32_t(CLAMP(col.b * 255.0f, 0.0f, 255.0f)) * 256 + uint32_t(CLAMP(col.a * 255.0f, 0.0f, 255.0f)));
+					} else {
+						state.instance_data_array[r_index].colors[j * 2 + 0] = (uint32_t(Math::make_half_float(col.g)) << 16) | Math::make_half_float(col.r);
+						state.instance_data_array[r_index].colors[j * 2 + 1] = (uint32_t(Math::make_half_float(col.a)) << 16) | Math::make_half_float(col.b);
+					}
 				}
 
 				_add_to_batch(r_index, r_batch_broken);
@@ -1169,7 +1209,20 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 					state.instance_data_array[r_index].lights[1] = lights[1];
 					state.instance_data_array[r_index].lights[2] = lights[2];
 					state.instance_data_array[r_index].lights[3] = lights[3];
-					state.instance_data_array[r_index].flags = base_flags;
+					if (RasterizerUtilGLES2::is_gles2()) {
+						// Same float-pair repack as rect items (see above).
+						float *lp = (float *)state.instance_data_array[r_index].lights;
+						for (int k = 0; k < 2; k++) {
+							uint32_t packed = lights[k];
+							lp[2 * k] = float((packed & 0xFF) * 256 + ((packed >> 8) & 0xFF));
+							lp[2 * k + 1] = float(((packed >> 16) & 0xFF) * 256 + ((packed >> 24) & 0xFF));
+						}
+						float *fp = (float *)&state.instance_data_array[r_index].flags;
+						fp[0] = float(base_flags & 0x1FFF);
+						fp[1] = float(base_flags >> 13);
+					} else {
+						state.instance_data_array[r_index].flags = base_flags;
+					}
 					state.instance_data_array[r_index].instance_uniforms_ofs = p_item->instance_allocated_shader_uniforms_offset;
 
 					for (uint32_t j = 0; j < 3; j++) {
@@ -1180,8 +1233,15 @@ void RasterizerCanvasGLES2::_record_item_commands(const Item *p_item, RID p_rend
 						state.instance_data_array[r_index].uvs[j * 2 + 0] = primitive->uvs[j + offset].x;
 						state.instance_data_array[r_index].uvs[j * 2 + 1] = primitive->uvs[j + offset].y;
 						Color col = primitive->colors[j + offset] * base_color;
-						state.instance_data_array[r_index].colors[j * 2 + 0] = (uint32_t(Math::make_half_float(col.g)) << 16) | Math::make_half_float(col.r);
-						state.instance_data_array[r_index].colors[j * 2 + 1] = (uint32_t(Math::make_half_float(col.a)) << 16) | Math::make_half_float(col.b);
+						if (RasterizerUtilGLES2::is_gles2()) {
+							// GLES2 simplification: 8-bit RG/BA pairs (see unpack_rg_ba).
+							float *cp = (float *)state.instance_data_array[r_index].colors;
+							cp[j * 2 + 0] = float(uint32_t(CLAMP(col.r * 255.0f, 0.0f, 255.0f)) * 256 + uint32_t(CLAMP(col.g * 255.0f, 0.0f, 255.0f)));
+							cp[j * 2 + 1] = float(uint32_t(CLAMP(col.b * 255.0f, 0.0f, 255.0f)) * 256 + uint32_t(CLAMP(col.a * 255.0f, 0.0f, 255.0f)));
+						} else {
+							state.instance_data_array[r_index].colors[j * 2 + 0] = (uint32_t(Math::make_half_float(col.g)) << 16) | Math::make_half_float(col.r);
+							state.instance_data_array[r_index].colors[j * 2 + 1] = (uint32_t(Math::make_half_float(col.a)) << 16) | Math::make_half_float(col.b);
+						}
 					}
 
 					_add_to_batch(r_index, r_batch_broken);
@@ -1349,8 +1409,8 @@ void RasterizerCanvasGLES2::_set_light_uniforms(RID p_shader_version, CanvasShad
 		float tex_matrix[16 * 8];
 		float shadow_matrix[16 * 8];
 		float colors[16 * 4];
-		uint32_t shadow_colors[16];
-		uint32_t flags[16];
+		float shadow_colors[16 * 4];
+		int32_t flags[16];
 		float shadow_pixel_sizes[16];
 		float heights[16];
 		float positions[16 * 2];
@@ -1362,10 +1422,11 @@ void RasterizerCanvasGLES2::_set_light_uniforms(RID p_shader_version, CanvasShad
 			memcpy(&tex_matrix[l * 8], lu.matrix, sizeof(float) * 8);
 			memcpy(&shadow_matrix[l * 8], lu.shadow_matrix, sizeof(float) * 8);
 			memcpy(&colors[l * 4], lu.color, sizeof(float) * 4);
-			uint32_t sc = 0;
-			memcpy(&sc, lu.shadow_color, sizeof(uint32_t));
-			shadow_colors[l] = sc;
-			flags[l] = lu.flags;
+			// GLES2 simplification: shadow color unpacked (no unpackUnorm4x8).
+			for (int i = 0; i < 4; i++) {
+				shadow_colors[l * 4 + i] = float(lu.shadow_color[i]) * (1.0f / 255.0f);
+			}
+			flags[l] = int32_t(lu.flags);
 			shadow_pixel_sizes[l] = lu.shadow_pixel_size;
 			heights[l] = lu.height;
 			positions[l * 2] = lu.position[0];
@@ -1374,11 +1435,12 @@ void RasterizerCanvasGLES2::_set_light_uniforms(RID p_shader_version, CanvasShad
 			shadow_y_ofss[l] = lu.shadow_y_ofs;
 			memcpy(&atlas_rects[l * 4], lu.atlas_rect, sizeof(float) * 4);
 		}
-		glUniformMatrix2x4fv(state.light_uniform_locations[LIGHT_MEMBER_TEXTURE_MATRIX], count, GL_FALSE, tex_matrix);
-		glUniformMatrix2x4fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_MATRIX], count, GL_FALSE, shadow_matrix);
+		// GLES2 simplification: vec4 rows instead of mat2x4 (same 8 floats).
+		glUniform4fv(state.light_uniform_locations[LIGHT_MEMBER_TEXTURE_MATRIX], count * 2, tex_matrix);
+		glUniform4fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_MATRIX], count * 2, shadow_matrix);
 		glUniform4fv(state.light_uniform_locations[LIGHT_MEMBER_COLOR], count, colors);
-		glUniform1uiv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_COLOR], count, shadow_colors);
-		glUniform1uiv(state.light_uniform_locations[LIGHT_MEMBER_FLAGS], count, flags);
+		glUniform4fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_COLOR], count, shadow_colors);
+		glUniform1iv(state.light_uniform_locations[LIGHT_MEMBER_FLAGS], count, flags);
 		glUniform1fv(state.light_uniform_locations[LIGHT_MEMBER_SHADOW_PIXEL_SIZE], count, shadow_pixel_sizes);
 		glUniform1fv(state.light_uniform_locations[LIGHT_MEMBER_HEIGHT], count, heights);
 		glUniform2fv(state.light_uniform_locations[LIGHT_MEMBER_POSITION], count, positions);
@@ -1692,7 +1754,13 @@ void RasterizerCanvasGLES2::_enable_attributes(uint32_t p_start, bool p_primitiv
 	}
 	for (uint32_t i = split; i <= 15; i++) {
 		glEnableVertexAttribArray(i);
-		glVertexAttribIPointer(i, 4, GL_UNSIGNED_INT, sizeof(InstanceData), CAST_INT_TO_UCHAR_PTR(p_start + (i - 8) * 4 * sizeof(float)));
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// GLES2 simplification: no integer attribs in ES 2.0; instance
+			// flags/lights/colors upload pre-converted as floats (see above).
+			glVertexAttribPointer(i, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData), CAST_INT_TO_UCHAR_PTR(p_start + (i - 8) * 4 * sizeof(float)));
+		} else {
+			glVertexAttribIPointer(i, 4, GL_UNSIGNED_INT, sizeof(InstanceData), CAST_INT_TO_UCHAR_PTR(p_start + (i - 8) * 4 * sizeof(float)));
+		}
 		glVertexAttribDivisor(i, p_rate);
 	}
 }
