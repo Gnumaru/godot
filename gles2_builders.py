@@ -18,6 +18,8 @@ class GLES2HeaderStruct:
         self.fbos = []
         self.texunits = []
         self.texunit_names = []
+        self.attributes = []
+        self.attribute_names = []
         self.ubos = []
         self.ubo_names = []
         self.feedbacks = []
@@ -146,6 +148,29 @@ def include_file_in_gles2_header(filename: str, header_data: GLES2HeaderStruct, 
                         print_error(f'In file "{filename}": #include "{includeline}" could not be found!"')
 
                 line = fs.readline()
+
+            if header_data.reading == "vertex" and line.find("layout") != -1 and line.find(") in") != -1:
+                # attribute location binding (for ES2 glBindAttribLocation,
+                # which replaces layout qualifiers missing in GLSL 1.00)
+                nocomment = line[: line.find("//")] if line.find("//") != -1 else line
+                if nocomment.find("=") != -1 and nocomment.find(")") != -1:
+                    locstr = nocomment[nocomment.find("=") + 1 : nocomment.find(")")]
+                    try:
+                        loc = str(int(locstr.strip()))
+                    except ValueError:
+                        loc = None
+                    if loc is not None:
+                        rest = nocomment[nocomment.find(")") + 1 :].strip()
+                        if rest.startswith("in "):
+                            rest = rest[3:].strip()
+                            if rest.endswith(";"):
+                                rest = rest[:-1]
+                            aname = rest[rest.rfind(" ") + 1 :].strip()
+                            if aname.find("[") != -1:
+                                aname = aname[: aname.find("[")]
+                            if aname and aname not in header_data.attribute_names:
+                                header_data.attributes += [(aname, loc)]
+                                header_data.attribute_names += [aname]
 
             if line.find("uniform") != -1 and line.lower().find("texunit:") != -1:
                 # texture unit
@@ -509,6 +534,18 @@ protected:
 		static TexUnitPair *_texunit_pairs = nullptr;
 """)
 
+        if header_data.attributes:
+            attributes = ",\n\t\t\t".join(f'{{ "{name}", {loc} }}' for name, loc in header_data.attributes)
+            file.write(f"""\
+		static AttrPair _attr_pairs[] = {{
+			{attributes},
+		}};
+""")
+        else:
+            file.write("""\
+		static AttrPair *_attr_pairs = nullptr;
+""")
+
         if header_data.ubos:
             ubos = ",\n\t\t\t".join(f'{{ "{name}", {ubo} }}' for name, ubo in header_data.ubos)
             file.write(f"""\
@@ -563,7 +600,8 @@ protected:
 		_setup(_vertex_code, _fragment_code, "{out_file_class}",
 				{len(header_data.uniforms)}, _uniform_strings, {len(header_data.ubos)}, _ubo_pairs,
 				{len(header_data.feedbacks)}, _feedbacks, {len(header_data.texunits)}, _texunit_pairs,
-				{len(header_data.specialization_names)}, _spec_pairs, {variant_count}, _variant_defines);
+				{len(header_data.specialization_names)}, _spec_pairs, {variant_count}, _variant_defines,
+				{len(header_data.attributes)}, _attr_pairs);
 	}}
 }};
 """)

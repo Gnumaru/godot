@@ -242,4 +242,9 @@ void main() {
 	frag_color = vec4(color, 1.0);
 
 #endif
+
+#ifdef USE_GLES2_ES2
+	// Single ES2 render target (frag_color is a plain global there).
+	gl_FragColor = frag_color;
+#endif
 }

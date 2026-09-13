@@ -35,18 +35,33 @@ uniform sampler2D source2; // texunit:-2
 
 uniform sampler2D source3; // texunit:-3
 
+#ifdef USE_GLES2_ES2
+#define OUTPUT0_SRGB 1
+#define OUTPUT1_SRGB 2
+#define OUTPUT2_SRGB 4
+#define OUTPUT3_SRGB 8
+#else
 #define OUTPUT0_SRGB uint(1)
 #define OUTPUT1_SRGB uint(2)
 #define OUTPUT2_SRGB uint(4)
 #define OUTPUT3_SRGB uint(8)
+#endif
 
+#ifdef USE_GLES2_ES2
+uniform int convert_to_srgb;
+#else
 uniform uint convert_to_srgb;
+#endif
 uniform vec4 modulate;
 uniform float time;
 
 in vec2 uv;
 
+#ifdef USE_GLES2_ES2
+// Single ES2 render target writes gl_FragColor (see below).
+#else
 layout (location = 0) out vec4 out_color0;
+#endif
 
 #ifdef USE_OUTPUT1
 layout (location = 1) out vec4 out_color1;
@@ -76,7 +91,12 @@ vec3 linear_to_srgb(vec3 color) {
 	// If going to srgb, clamp from 0 to 1.
 	color = clamp(color, vec3(0.0), vec3(1.0));
 	const vec3 a = vec3(0.055f);
+#ifdef USE_GLES2_ES2
+	// ES 2.0 mix() has no bvec overload.
+	return mix((vec3(1.0f) + a) * pow(color.rgb, vec3(1.0f / 2.4f)) - a, 12.92f * color.rgb, vec3(lessThan(color.rgb, vec3(0.0031308f))));
+#else
 	return mix((vec3(1.0f) + a) * pow(color.rgb, vec3(1.0f / 2.4f)) - a, 12.92f * color.rgb, lessThan(color.rgb, vec3(0.0031308f)));
+#endif
 }
 
 void main() {
@@ -88,7 +108,15 @@ void main() {
 
 #CODE : BLIT
 
-	// Discards extra outputs if extra output targets were not bound
+	// Discards extra outputs if extra output targets were not bound.
+	// ES 2.0 has a single target: convert first (never read gl_FragColor),
+	// then write once.
+#ifdef USE_GLES2_ES2
+	if (mod(float(convert_to_srgb / OUTPUT0_SRGB), 2.0) > 0.5) {
+		color0.rgb = linear_to_srgb(color0.rgb); // Regular linear -> SRGB conversion.
+	}
+	gl_FragColor = color0;
+#else
 	out_color0 = color0;
 
 #ifdef USE_OUTPUT1
@@ -118,5 +146,6 @@ void main() {
 	if (bool(convert_to_srgb & OUTPUT3_SRGB)) {
 		out_color3.rgb = linear_to_srgb(out_color3.rgb);
 	}
+#endif
 #endif
 }

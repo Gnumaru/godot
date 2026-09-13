@@ -55,6 +55,11 @@ protected:
 		int index;
 	};
 
+	struct AttrPair {
+		const char *name;
+		int location;
+	};
+
 	struct UBOPair {
 		const char *name;
 		int index;
@@ -167,6 +172,8 @@ private:
 	int feedback_count = 0;
 	const TexUnitPair *texunit_pairs = nullptr;
 	int texunit_pair_count = 0;
+	const AttrPair *attribute_pairs = nullptr;
+	int attribute_count = 0;
 	int specialization_count = 0;
 	const Specialization *specializations = nullptr;
 	uint64_t specialization_default_mask = 0;
@@ -178,7 +185,7 @@ private:
 
 protected:
 	ShaderGLES2();
-	void _setup(const char *p_vertex_code, const char *p_fragment_code, const char *p_name, int p_uniform_count, const char **p_uniform_names, int p_ubo_count, const UBOPair *p_ubos, int p_feedback_count, const Feedback *p_feedback, int p_texture_count, const TexUnitPair *p_tex_units, int p_specialization_count, const Specialization *p_specializations, int p_variant_count, const char **p_variants);
+	void _setup(const char *p_vertex_code, const char *p_fragment_code, const char *p_name, int p_uniform_count, const char **p_uniform_names, int p_ubo_count, const UBOPair *p_ubos, int p_feedback_count, const Feedback *p_feedback, int p_texture_count, const TexUnitPair *p_tex_units, int p_specialization_count, const Specialization *p_specializations, int p_variant_count, const char **p_variants, int p_attribute_count, const AttrPair *p_attributes);
 
 	_FORCE_INLINE_ bool _version_bind_shader(RID p_version, int p_variant, uint64_t p_specialization) {
 		ERR_FAIL_INDEX_V(p_variant, variant_count, false);

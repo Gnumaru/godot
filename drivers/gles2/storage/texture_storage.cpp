@@ -1402,9 +1402,11 @@ void TextureStorage::texture_drawable_blit_rect(const TypedArray<RID> &p_texture
 	uint32_t specialization = 0;
 	const int outputFlagArray[4] = { 0, TexBlitShaderGLES2::USE_OUTPUT1, TexBlitShaderGLES2::USE_OUTPUT2, TexBlitShaderGLES2::USE_OUTPUT3 };
 	const int srgbMaskArray[4] = { 1, 2, 4, 8 };
+	// GLES2 simplification: ES 2.0 has a single render target (no glDrawBuffers).
+	const int target_limit = RasterizerUtilGLES2::is_gles2() ? 1 : 4;
 	while (i < 4) {
 		// Attach Targets to Framebuffer
-		if (i < p_textures.size()) {
+		if (i < p_textures.size() && i < target_limit) {
 			tar_textures[i] = get_texture(p_textures[i]);
 			ERR_FAIL_NULL_MSG(tar_textures[i], "Drawable Texture target cannot be null.");
 			if (i > 0) {
@@ -1455,7 +1457,12 @@ void TextureStorage::texture_drawable_blit_rect(const TypedArray<RID> &p_texture
 
 	glViewport(0, 0, vp_size.x, vp_size.y);
 
-	material_storage->shaders.tex_blit_shader.version_set_uniform(TexBlitShaderGLES2::CONVERT_TO_SRGB, convert_to_srgb_mask, version, variant, specialization);
+	// GLES2 simplification: ES 2.0 declares convert_to_srgb as int (no uint).
+	if (RasterizerUtilGLES2::is_gles2()) {
+		material_storage->shaders.tex_blit_shader.version_set_uniform(TexBlitShaderGLES2::CONVERT_TO_SRGB, int32_t(convert_to_srgb_mask), version, variant, specialization);
+	} else {
+		material_storage->shaders.tex_blit_shader.version_set_uniform(TexBlitShaderGLES2::CONVERT_TO_SRGB, convert_to_srgb_mask, version, variant, specialization);
+	}
 	material_storage->shaders.tex_blit_shader.version_set_uniform(TexBlitShaderGLES2::SIZE, rect_size, version, variant, specialization);
 	material_storage->shaders.tex_blit_shader.version_set_uniform(TexBlitShaderGLES2::OFFSET, offset, version, variant, specialization);
 	material_storage->shaders.tex_blit_shader.version_set_uniform(TexBlitShaderGLES2::MODULATE, p_modulate, version, variant, specialization);
@@ -1490,12 +1497,25 @@ void TextureStorage::texture_drawable_blit_rect(const TypedArray<RID> &p_texture
 			break;
 	}
 
-	glDrawBuffers(draw_buffers.size(), draw_buffers.ptr());
+	// GLES2 simplification: ES 2.0 has a single render target (no glDrawBuffers).
+	if (!RasterizerUtilGLES2::is_gles2()) {
+		glDrawBuffers(draw_buffers.size(), draw_buffers.ptr());
+	}
 
 	// DRAW!!
-	glBindVertexArray(tex_blit_quad_array);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glBindVertexArray(0);
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: no VAOs in ES 2.0; bind the quad manually.
+		glBindBuffer(GL_ARRAY_BUFFER, tex_blit_quad);
+		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glDisableVertexAttribArray(RSE::ARRAY_VERTEX);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+	} else {
+		glBindVertexArray(tex_blit_quad_array);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+	}
 
 	// Reset to system FBO
 	glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);

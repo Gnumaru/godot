@@ -30,6 +30,8 @@
 
 #include "copy_effects.h"
 
+#include "drivers/gles2/rasterizer_util_gles2.h"
+
 #ifdef GLES2_ENABLED
 
 #include "drivers/gles2/storage/texture_storage.h"
@@ -65,13 +67,16 @@ CopyEffects::CopyEffects() {
 		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6, qv, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
 
-		glGenVertexArrays(1, &screen_triangle_array);
-		glBindVertexArray(screen_triangle_array);
-		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
-		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
-		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
+		// GLES2 simplification: no VAOs in ES 2.0 (bound manually at draw).
+		if (!RasterizerUtilGLES2::is_gles2()) {
+			glGenVertexArrays(1, &screen_triangle_array);
+			glBindVertexArray(screen_triangle_array);
+			glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
+			glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+			glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+			glBindVertexArray(0);
+			glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
+		}
 	}
 
 	{ // Screen Quad
@@ -97,22 +102,27 @@ CopyEffects::CopyEffects() {
 		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 12, qv, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
 
-		glGenVertexArrays(1, &quad_array);
-		glBindVertexArray(quad_array);
-		glBindBuffer(GL_ARRAY_BUFFER, quad);
-		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
-		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
+		// GLES2 simplification: no VAOs in ES 2.0 (bound manually at draw).
+		if (!RasterizerUtilGLES2::is_gles2()) {
+			glGenVertexArrays(1, &quad_array);
+			glBindVertexArray(quad_array);
+			glBindBuffer(GL_ARRAY_BUFFER, quad);
+			glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+			glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+			glBindVertexArray(0);
+			glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
+		}
 	}
 }
 
 CopyEffects::~CopyEffects() {
 	singleton = nullptr;
 	glDeleteBuffers(1, &screen_triangle);
-	glDeleteVertexArrays(1, &screen_triangle_array);
 	glDeleteBuffers(1, &quad);
-	glDeleteVertexArrays(1, &quad_array);
+	if (!RasterizerUtilGLES2::is_gles2()) {
+		glDeleteVertexArrays(1, &screen_triangle_array);
+		glDeleteVertexArrays(1, &quad_array);
+	}
 	copy.shader.version_free(copy.shader_version);
 }
 
@@ -334,15 +344,35 @@ void CopyEffects::set_color(const Color &p_color, const Rect2i &p_region) {
 }
 
 void CopyEffects::draw_screen_triangle() {
-	glBindVertexArray(screen_triangle_array);
-	glDrawArrays(GL_TRIANGLES, 0, 3);
-	glBindVertexArray(0);
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: no VAOs in ES 2.0; bind manually.
+		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
+		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glDisableVertexAttribArray(RSE::ARRAY_VERTEX);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+	} else {
+		glBindVertexArray(screen_triangle_array);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glBindVertexArray(0);
+	}
 }
 
 void CopyEffects::draw_screen_quad() {
-	glBindVertexArray(quad_array);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glBindVertexArray(0);
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: no VAOs in ES 2.0; bind manually.
+		glBindBuffer(GL_ARRAY_BUFFER, quad);
+		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glDisableVertexAttribArray(RSE::ARRAY_VERTEX);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+	} else {
+		glBindVertexArray(quad_array);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+	}
 }
 
 #endif // GLES2_ENABLED

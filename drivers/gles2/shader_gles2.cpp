@@ -46,6 +46,100 @@ static String _mkid(const String &p_id) {
 	return id.replace("__", "_dus_"); //doubleunderscore is reserved in glsl
 }
 
+// GLES2 simplification: mechanical 300-es to ES 1.00 (WebGL1-class) translation,
+// applied per line (1:1, so error line numbers are preserved). Handles PURE
+// SYNTAX only (io qualifiers, layout, texture lookups); type-level porting
+// (uint, bit ops) lives in the templates behind USE_GLES2_ES2.
+static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage) {
+	String stripped = p_line.strip_edges();
+	if (stripped.is_empty() || stripped.begins_with("//") || stripped.begins_with("#")) {
+		return p_line;
+	}
+
+	String rest = stripped;
+	if (rest.begins_with("layout")) {
+		// layout(location = N) in/out ... ;  (multiview "layout(num_views=2) in;"
+		// has no parens content we care about; leave unknown layouts alone).
+		int open = rest.find("(");
+		int close = rest.find(")");
+		if (open == -1 || close == -1 || close < open) {
+			return p_line;
+		}
+		rest = rest.substr(close + 1).strip_edges();
+		if (!(rest.begins_with("in ") || rest.begins_with("out ")) || !rest.ends_with(";")) {
+			return p_line;
+		}
+		if (rest.begins_with("in ")) {
+			rest = (p_vertex_stage ? String("attribute ") : String("varying ")) + rest.substr(3);
+		} else { // out
+			if (p_vertex_stage) {
+				rest = String("varying ") + rest.substr(4);
+			} else {
+				// Fragment outputs become plain globals (single ES2 target;
+				// each ported template copies its color to gl_FragColor at
+				// the end of main, so read-modify-write chains keep working).
+				rest = rest.substr(4);
+			}
+		}
+		return rest;
+	}
+
+	if (rest.begins_with("flat ")) {
+		rest = rest.substr(5).strip_edges(); // ES2 has no flat interpolation.
+	}
+	if ((rest.begins_with("in ") || rest.begins_with("out ")) && rest.ends_with(";")) {
+		if (rest.begins_with("in ")) {
+			rest = (p_vertex_stage ? String("attribute ") : String("varying ")) + rest.substr(3);
+		} else {
+			// Fragment out (no layout): plain global, copied to gl_FragColor
+			// by ported templates (see above).
+			rest = p_vertex_stage ? String("varying ") + rest.substr(4) : rest.substr(4);
+		}
+		return rest;
+	}
+
+	String out = p_line;
+	out = out.replace("textureLod(", "texture2D("); // LOD param becomes bias (hint).
+	out = out.replace("texture(", "texture2D("); // safe: textureProj/Size lack "texture(".
+	// Float suffixes are invalid in GLSL 1.10 (warnings only, but noisy).
+	while (true) {
+		int fpos = out.find("f");
+		if (fpos == -1) {
+			break;
+		}
+		// Strip only digit-dot-digit "f" suffixes, e.g. "1.0f" (not identifiers).
+		int start = fpos - 1;
+		bool has_dot = false;
+		bool has_digit = false;
+		while (start >= 0 && ((out[start] >= '0' && out[start] <= '9') || out[start] == '.')) {
+			if (out[start] == '.') {
+				if (has_dot) {
+					break;
+				}
+				has_dot = true;
+			} else {
+				has_digit = true;
+			}
+			start--;
+		}
+		if (has_dot && has_digit && (start < 0 || !(out[start] == '_' || (out[start] >= 'a' && out[start] <= 'z') || (out[start] >= 'A' && out[start] <= 'Z')))) {
+			out = out.substr(0, fpos) + out.substr(fpos + 1);
+		} else {
+			break; // avoid re-scanning the same spot forever; rare leftovers stay.
+		}
+	}
+	return out;
+}
+
+static String _translate_glsl_es2(const String &p_code, bool p_vertex_stage) {
+	String out;
+	Vector<String> lines = p_code.split("\n");
+	for (int i = 0; i < lines.size(); i++) {
+		out += _translate_glsl_es2_line(lines[i], p_vertex_stage) + "\n";
+	}
+	return out;
+}
+
 void ShaderGLES2::_add_stage(const char *p_code, StageType p_stage_type) {
 	Vector<String> lines = String::utf8(p_code).split("\n");
 
@@ -102,7 +196,7 @@ void ShaderGLES2::_add_stage(const char *p_code, StageType p_stage_type) {
 	}
 }
 
-void ShaderGLES2::_setup(const char *p_vertex_code, const char *p_fragment_code, const char *p_name, int p_uniform_count, const char **p_uniform_names, int p_ubo_count, const UBOPair *p_ubos, int p_feedback_count, const Feedback *p_feedback, int p_texture_count, const TexUnitPair *p_tex_units, int p_specialization_count, const Specialization *p_specializations, int p_variant_count, const char **p_variants) {
+void ShaderGLES2::_setup(const char *p_vertex_code, const char *p_fragment_code, const char *p_name, int p_uniform_count, const char **p_uniform_names, int p_ubo_count, const UBOPair *p_ubos, int p_feedback_count, const Feedback *p_feedback, int p_texture_count, const TexUnitPair *p_tex_units, int p_specialization_count, const Specialization *p_specializations, int p_variant_count, const char **p_variants, int p_attribute_count, const AttrPair *p_attributes) {
 	name = p_name;
 
 	if (p_vertex_code) {
@@ -118,6 +212,8 @@ void ShaderGLES2::_setup(const char *p_vertex_code, const char *p_fragment_code,
 	ubo_count = p_ubo_count;
 	texunit_pairs = p_tex_units;
 	texunit_pair_count = p_texture_count;
+	attribute_pairs = p_attributes;
+	attribute_count = p_attribute_count;
 	specializations = p_specializations;
 	specialization_count = p_specialization_count;
 	specialization_default_mask = 0;
@@ -138,6 +234,9 @@ void ShaderGLES2::_setup(const char *p_vertex_code, const char *p_fragment_code,
 	tohash.append(p_fragment_code ? String::utf8(p_fragment_code) : "");
 
 	tohash.append("[gl_implementation]");
+	// GLES2 simplification: the ES 2.0 target compiles different source from the
+	// same templates (version strings may be identical across targets).
+	tohash.append(RasterizerUtilGLES2::is_gles2() ? "[es2]" : "[es3]");
 	const String &vendor = String::utf8((const char *)glGetString(GL_VENDOR));
 	tohash.append(vendor.is_empty() ? "unknown" : vendor);
 	const String &renderer = String::utf8((const char *)glGetString(GL_RENDERER));
@@ -161,9 +260,10 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 		builder.append("#version 330\n");
 		builder.append("#define USE_GLES_OVER_GL\n");
 	} else if (RasterizerUtilGLES2::is_gles2()) {
-		// GLES2 simplification: real ES 2.0 context (WebGL1-class). Templates
-		// are ported separately; unported 300-es syntax fails here as expected.
+		// GLES2 simplification: real ES 2.0 context (WebGL1-class). Template
+		// chunks are translated below; unported 300-es types fail as expected.
 		builder.append("#version 100\n");
+		builder.append("#define USE_GLES2_ES2\n");
 		builder.append("precision highp float;\nprecision highp int;\n");
 	} else {
 		builder.append("#version 300 es\n");
@@ -210,7 +310,7 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 	builder.append("#elif defined(GL_OVR_multiview)\n");
 	builder.append("#extension GL_OVR_multiview : require\n");
 	builder.append("#endif\n");
-	if (p_stage_type == StageType::STAGE_TYPE_VERTEX) {
+	if (p_stage_type == StageType::STAGE_TYPE_VERTEX && !RasterizerUtilGLES2::is_gles2()) {
 		builder.append("layout(num_views=2) in;\n");
 	}
 	builder.append("#define ViewIndex gl_ViewID_OVR\n");
@@ -226,30 +326,40 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 	if (!RasterizerUtilGLES2::is_gles_over_gl()) {
 		builder.append("precision highp sampler2D;\n");
 		builder.append("precision highp samplerCube;\n");
-		builder.append("precision highp sampler2DArray;\n");
-		builder.append("precision highp sampler3D;\n");
+		if (!RasterizerUtilGLES2::is_gles2()) {
+			// sampler2DArray/sampler3D do not exist in ES 2.0.
+			builder.append("precision highp sampler2DArray;\n");
+			builder.append("precision highp sampler3D;\n");
+		}
 	}
 
 	const StageTemplate &stage_template = stage_templates[p_stage_type];
+	const bool es2 = RasterizerUtilGLES2::is_gles2();
+	const bool es2_vertex = es2 && p_stage_type == StageType::STAGE_TYPE_VERTEX;
 	for (uint32_t i = 0; i < stage_template.chunks.size(); i++) {
 		const StageTemplate::Chunk &chunk = stage_template.chunks[i];
 		switch (chunk.type) {
 			case StageTemplate::Chunk::TYPE_MATERIAL_UNIFORMS: {
-				builder.append(String::utf8(p_version->uniforms.get_data())); //uniforms (same for vertex and fragment)
+				String code = String::utf8(p_version->uniforms.get_data()); //uniforms (same for vertex and fragment)
+				builder.append(es2 ? _translate_glsl_es2(code, es2_vertex) : code);
 			} break;
 			case StageTemplate::Chunk::TYPE_VERTEX_GLOBALS: {
-				builder.append(String::utf8(p_version->vertex_globals.get_data())); // vertex globals
+				String code = String::utf8(p_version->vertex_globals.get_data()); // vertex globals
+				builder.append(es2 ? _translate_glsl_es2(code, true) : code);
 			} break;
 			case StageTemplate::Chunk::TYPE_FRAGMENT_GLOBALS: {
-				builder.append(String::utf8(p_version->fragment_globals.get_data())); // fragment globals
+				String code = String::utf8(p_version->fragment_globals.get_data()); // fragment globals
+				builder.append(es2 ? _translate_glsl_es2(code, false) : code);
 			} break;
 			case StageTemplate::Chunk::TYPE_CODE: {
 				if (p_version->code_sections.has(chunk.code)) {
-					builder.append(String::utf8(p_version->code_sections[chunk.code].get_data()));
+					String code = String::utf8(p_version->code_sections[chunk.code].get_data());
+					builder.append(es2 ? _translate_glsl_es2(code, es2_vertex) : code);
 				}
 			} break;
 			case StageTemplate::Chunk::TYPE_TEXT: {
-				builder.append(String::utf8(chunk.text.get_data()));
+				String code = String::utf8(chunk.text.get_data());
+				builder.append(es2 ? _translate_glsl_es2(code, es2_vertex) : code);
 			} break;
 		}
 	}
@@ -427,6 +537,12 @@ void ShaderGLES2::_compile_specialization(Version::Specialization &spec, uint32_
 		if (feedback.size()) {
 			glTransformFeedbackVaryings(spec.id, feedback.size(), feedback.ptr(), GL_INTERLEAVED_ATTRIBS);
 		}
+	}
+
+	// GLES2 simplification: pin attribute locations (the ES 2.0 target has no
+	// layout qualifiers; ignored when explicit layouts exist, so harmless).
+	for (int i = 0; i < attribute_count; i++) {
+		glBindAttribLocation(spec.id, attribute_pairs[i].location, attribute_pairs[i].name);
 	}
 
 	glLinkProgram(spec.id);
