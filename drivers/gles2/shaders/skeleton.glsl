@@ -98,7 +98,8 @@ uniform mediump vec2 inverse_transform_offset;
 #endif
 
 vec2 signNotZero(vec2 v) {
-	return mix(vec2(-1.0), vec2(1.0), greaterThanEqual(v.xy, vec2(0.0)));
+	// ES 2.0 mix() has no bvec overload.
+	return mix(vec2(-1.0), vec2(1.0), vec2(greaterThanEqual(v.xy, vec2(0.0))));
 }
 
 vec3 oct_to_vec3(vec2 oct) {

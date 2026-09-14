@@ -46,6 +46,132 @@ static String _mkid(const String &p_id) {
 	return id.replace("__", "_dus_"); //doubleunderscore is reserved in glsl
 }
 
+static bool _is_glsl_ident(char32_t p_c) {
+	return p_c == '_' || (p_c >= 'a' && p_c <= 'z') || (p_c >= 'A' && p_c <= 'Z') || (p_c >= '0' && p_c <= '9');
+}
+
+// First float vector constructor in the text (vec2/vec3/vec4, boundary checked).
+// Used to infer the mix() argument size when wrapping boolean third arguments.
+static bool _find_vec_ctor(const String &p_text, String &r_type) {
+	int search = 0;
+	while (true) {
+		int vpos = p_text.find("vec", search);
+		if (vpos == -1) {
+			return false;
+		}
+		if (vpos > 0 && _is_glsl_ident(p_text[vpos - 1])) { // e.g. "uvec", "myvec"
+			search = vpos + 3;
+			continue;
+		}
+		if (vpos + 4 < p_text.length() && p_text[vpos + 4] == '(') {
+			char32_t dim = p_text[vpos + 3];
+			if (dim == '2') {
+				r_type = "vec2";
+				return true;
+			} else if (dim == '3') {
+				r_type = "vec3";
+				return true;
+			} else if (dim == '4') {
+				r_type = "vec4";
+				return true;
+			}
+		}
+		search = vpos + 3;
+	}
+}
+
+// ES 2.0 mix() has no boolean overload, but 300 es allows
+// mix(a, b, lessThan(...)) (used by editor and user shaders alike).
+// Wrap such third arguments in the matching float vector type.
+static String _wrap_mix_bvec_args(const String &p_line) {
+	// Block comments may hold unbalanced parens; leave those lines alone.
+	if (p_line.find("/*") != -1 || p_line.find("*/") != -1) {
+		return p_line;
+	}
+	static const char *bool_funcs[] = { "lessThan", "greaterThan", "lessThanEqual", "greaterThanEqual", "equal", "notEqual" };
+	String out = p_line;
+	int search_from = 0;
+	while (true) {
+		int mpos = out.find("mix(", search_from);
+		if (mpos == -1) {
+			break;
+		}
+		if (mpos > 0 && _is_glsl_ident(out[mpos - 1])) { // e.g. "remix("
+			search_from = mpos + 4;
+			continue;
+		}
+		// Split top-level comma-separated args (balanced parens).
+		int commas[2] = { -1, -1 };
+		int found = 0;
+		int depth = 1;
+		int i = mpos + 4;
+		bool broken = false;
+		for (; i < out.length(); i++) {
+			char32_t c = out[i];
+			if (c == '(') {
+				depth++;
+			} else if (c == ')') {
+				depth--;
+				if (depth == 0) {
+					break;
+				}
+			} else if (c == ',' && depth == 1) {
+				if (found < 2) {
+					commas[found++] = i;
+				} else {
+					broken = true; // not a 3-arg mix().
+					break;
+				}
+			}
+		}
+		if (broken || depth != 0 || found != 2) {
+			search_from = mpos + 4;
+			continue;
+		}
+		int close = i;
+		String arg1 = out.substr(mpos + 4, commas[0] - mpos - 4);
+		String arg3 = out.substr(commas[1] + 1, close - commas[1] - 1).strip_edges();
+		// Third arg must be exactly one BOOLFUNC(...) call.
+		String func;
+		for (int k = 0; k < 6; k++) {
+			String fname = bool_funcs[k];
+			if (arg3.begins_with(fname + "(")) {
+				func = fname;
+				break;
+			}
+		}
+		if (!func.is_empty()) {
+			// Verify the call closes exactly at the end (balanced).
+			int d2 = 0;
+			bool closed_at_end = false;
+			for (int j = func.length(); j < arg3.length(); j++) {
+				if (arg3[j] == '(') {
+					d2++;
+				} else if (arg3[j] == ')') {
+					d2--;
+					if (d2 == 0) {
+						closed_at_end = (j == arg3.length() - 1);
+						break;
+					}
+				}
+			}
+			if (closed_at_end) {
+				String vtype;
+				if (!_find_vec_ctor(arg3, vtype)) {
+					_find_vec_ctor(arg1, vtype);
+				}
+				if (!vtype.is_empty()) {
+					out = out.substr(0, commas[1] + 1) + vtype + "(" + arg3 + ")" + out.substr(close);
+				}
+			}
+		}
+		// Safe after an edit: the same mix( no longer matches (arg3 now starts
+		// with vecN(), not a bool func), and nested mix() calls get visited next.
+		search_from = mpos + 4;
+	}
+	return out;
+}
+
 // GLES2 simplification: mechanical 300-es to ES 1.00 (WebGL1-class) translation,
 // applied per line (1:1, so error line numbers are preserved). Handles PURE
 // SYNTAX only (io qualifiers, layout, texture lookups); type-level porting
@@ -131,33 +257,56 @@ static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage
 	String out = rest;
 	out = out.replace("textureLod(", "texture2D("); // LOD param becomes bias (hint).
 	out = out.replace("texture(", "texture2D("); // safe: textureProj/Size lack "texture(".
-	// Float suffixes are invalid in GLSL 1.10 (warnings only, but noisy).
-	while (true) {
-		int fpos = out.find("f");
-		if (fpos == -1) {
-			break;
-		}
-		// Strip only digit-dot-digit "f" suffixes, e.g. "1.0f" (not identifiers).
-		int start = fpos - 1;
-		bool has_dot = false;
-		bool has_digit = false;
-		while (start >= 0 && ((out[start] >= '0' && out[start] <= '9') || out[start] == '.')) {
-			if (out[start] == '.') {
-				if (has_dot) {
-					break;
-				}
-				has_dot = true;
-			} else {
-				has_digit = true;
+	// Float suffixes are invalid below GLSL 1.20 (errors on strict compilers).
+	// Note: lines often start with identifiers holding 'f' ("float", "if"),
+	// so every occurrence must be classified; non-suffixes just advance.
+	for (int pass = 0; pass < 2; pass++) {
+		String needle = (pass == 0) ? String("f") : String("F");
+		int fsearch = 0;
+		while (true) {
+			int fpos = out.find(needle, fsearch);
+			if (fpos == -1) {
+				break;
 			}
-			start--;
-		}
-		if (has_dot && has_digit && (start < 0 || !(out[start] == '_' || (out[start] >= 'a' && out[start] <= 'z') || (out[start] >= 'A' && out[start] <= 'Z')))) {
-			out = out.substr(0, fpos) + out.substr(fpos + 1);
-		} else {
-			break; // avoid re-scanning the same spot forever; rare leftovers stay.
+			// Strip only digit-dot-digit suffixes, e.g. "1.0f" (not identifiers).
+			int start = fpos - 1;
+			bool has_dot = false;
+			bool has_digit = false;
+			while (start >= 0 && ((out[start] >= '0' && out[start] <= '9') || out[start] == '.')) {
+				if (out[start] == '.') {
+					if (has_dot) {
+						break;
+					}
+					has_dot = true;
+				} else {
+					has_digit = true;
+				}
+				start--;
+			}
+			bool is_suffix = has_dot && has_digit && (start < 0 || !_is_glsl_ident(out[start]));
+			if (!is_suffix && has_digit && !has_dot) {
+				// Scientific notation without a dot, e.g. "1e-7f".
+				int k = start;
+				if (k >= 0 && (out[k] == '-' || out[k] == '+')) {
+					k--;
+				}
+				if (k >= 1 && (out[k] == 'e' || out[k] == 'E') && out[k - 1] >= '0' && out[k - 1] <= '9') {
+					int m = k - 1;
+					while (m >= 0 && out[m] >= '0' && out[m] <= '9') {
+						m--;
+					}
+					is_suffix = (m < 0 || !_is_glsl_ident(out[m]));
+				}
+			}
+			if (is_suffix) {
+				out = out.substr(0, fpos) + out.substr(fpos + 1);
+				fsearch = fpos; // rescan from the removal point (string shrank by one).
+			} else {
+				fsearch = fpos + 1; // not a suffix (identifier etc.), keep looking.
+			}
 		}
 	}
+	out = _wrap_mix_bvec_args(out); // mix() has no boolean overload in ES 2.0.
 	if (!trailer.is_empty()) {
 		out += "\n" + trailer;
 	}
