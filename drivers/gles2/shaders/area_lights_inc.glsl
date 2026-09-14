@@ -172,7 +172,12 @@ void ltc_evaluate(vec3 normal, vec3 eye_vec, mat3 M_inv, vec3 points[4], out flo
 	x = cross(normal, z);
 
 	// rotate area light in (T1, normal, T2) basis
+#ifdef USE_GLES2_ES2
+	// ES 2.0 has no transpose(); construct transposed directly.
+	M_inv = M_inv * mat3(vec3(x.x, normal.x, z.x), vec3(x.y, normal.y, z.y), vec3(x.z, normal.z, z.z));
+#else
 	M_inv = M_inv * transpose(mat3(x, normal, z));
+#endif
 
 	vec3 L[5];
 	L[0] = M_inv * points[0];

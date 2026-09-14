@@ -66,6 +66,21 @@ static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage
 	if (rest.is_empty()) {
 		return p_line;
 	}
+
+	// Split trailing preprocessor directives onto their own line
+	// (`decl;#endif` on one line is fragile across compilers).
+	String trailer;
+	int trailer_pos = rest.find(";#endif");
+	if (trailer_pos == -1) {
+		trailer_pos = rest.find(";#else");
+	}
+	if (trailer_pos == -1) {
+		trailer_pos = rest.find(";#elif");
+	}
+	if (trailer_pos != -1) {
+		trailer = rest.substr(trailer_pos + 1);
+		rest = rest.substr(0, trailer_pos + 1).strip_edges();
+	}
 	if (rest.begins_with("layout")) {
 		// layout(location = N) in/out ... ;  (multiview "layout(num_views=2) in;"
 		// has no parens content we care about; leave unknown layouts alone).
@@ -90,6 +105,9 @@ static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage
 				rest = rest.substr(4);
 			}
 		}
+		if (!trailer.is_empty()) {
+			return rest + "\n" + trailer;
+		}
 		return rest;
 	}
 
@@ -104,10 +122,13 @@ static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage
 			// by ported templates (see above).
 			rest = p_vertex_stage ? String("varying ") + rest.substr(4) : rest.substr(4);
 		}
+		if (!trailer.is_empty()) {
+			return rest + "\n" + trailer;
+		}
 		return rest;
 	}
 
-	String out = p_line;
+	String out = rest;
 	out = out.replace("textureLod(", "texture2D("); // LOD param becomes bias (hint).
 	out = out.replace("texture(", "texture2D("); // safe: textureProj/Size lack "texture(".
 	// Float suffixes are invalid in GLSL 1.10 (warnings only, but noisy).
@@ -136,6 +157,9 @@ static String _translate_glsl_es2_line(const String &p_line, bool p_vertex_stage
 		} else {
 			break; // avoid re-scanning the same spot forever; rare leftovers stay.
 		}
+	}
+	if (!trailer.is_empty()) {
+		out += "\n" + trailer;
 	}
 	return out;
 }
@@ -330,7 +354,11 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 	builder.append("#define ViewIndex gl_ViewID_OVR\n");
 	builder.append("#define MAX_VIEWS 2\n");
 	builder.append("#else\n");
-	builder.append("#define ViewIndex uint(0)\n");
+	if (RasterizerUtilGLES2::is_gles2()) {
+		builder.append("#define ViewIndex 0\n");
+	} else {
+		builder.append("#define ViewIndex uint(0)\n");
+	}
 	builder.append("#define MAX_VIEWS 1\n");
 	builder.append("#endif\n");
 

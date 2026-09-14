@@ -35,6 +35,7 @@
 #include "drivers/gles2/storage/config.h"
 #include "drivers/gles2/storage/texture_storage.h"
 #include "drivers/gles2/storage/utilities.h"
+#include "drivers/gles2/rasterizer_util_gles2.h"
 #include "servers/rendering/renderer_viewport.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -962,11 +963,19 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 		}
 	}
 
-	glGenVertexArrays(1, &v.vertex_array);
-	glBindVertexArray(v.vertex_array);
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: no VAOs in ES 2.0; pointers below apply to
+		// global state and are re-applied every draw (see getters).
+		v.vertex_array = 0;
+	} else {
+		glGenVertexArrays(1, &v.vertex_array);
+		glBindVertexArray(v.vertex_array);
+	}
 
 	for (int i = 0; i < RSE::ARRAY_INDEX; i++) {
 		if (!attribs[i].enabled) {
+			// GLES2 simplification: always sync global disable state (no VAOs
+			// in ES 2.0, so stale arrays would otherwise feed the draw).
 			glDisableVertexAttribArray(i);
 			continue;
 		}
@@ -985,9 +994,11 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 			glBindBuffer(GL_ARRAY_BUFFER, s->skin_buffer);
 		}
 
-		if (attribs[i].integer) {
+		if (attribs[i].integer && !RasterizerUtilGLES2::is_gles2()) {
 			glVertexAttribIPointer(i, attribs[i].size, attribs[i].type, attribs[i].stride, CAST_INT_TO_UCHAR_PTR(attribs[i].offset));
 		} else {
+			// GLES2 simplification: no integer attribs in ES 2.0 (bone data
+			// is unused with software skinning, so float aliasing is fine).
 			glVertexAttribPointer(i, attribs[i].size, attribs[i].type, attribs[i].normalized, attribs[i].stride, CAST_INT_TO_UCHAR_PTR(attribs[i].offset));
 		}
 		glEnableVertexAttribArray(i);
@@ -1008,7 +1019,9 @@ void MeshStorage::_mesh_surface_generate_version_for_input_mask(Mesh::Surface::V
 
 	// Do not bind index here as we want to switch between index buffers for LOD
 
-	glBindVertexArray(0);
+	if (!RasterizerUtilGLES2::is_gles2()) {
+		glBindVertexArray(0);
+	}
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 	v.input_mask = p_input_mask;
@@ -2319,16 +2332,25 @@ void GLES2::MeshStorage::multimesh_vertex_attrib_setup(GLuint p_instance_buffer,
 
 	if (p_has_color_or_custom_data) {
 		uint32_t color_custom_offset = p_uses_format_2d ? 8 : 12;
-		glEnableVertexAttribArray(p_attrib_base_index + 3);
-		glVertexAttribIPointer(p_attrib_base_index + 3, 4, GL_UNSIGNED_INT, p_stride * sizeof(float), CAST_INT_TO_UCHAR_PTR(color_custom_offset * sizeof(float)));
-		glVertexAttribDivisor(p_attrib_base_index + 3, 1);
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// GLES2 simplification: no uint attribs in ES 2.0 and instance
+			// colors stay unpacked (see scene.glsl); leave disabled.
+		} else {
+			glEnableVertexAttribArray(p_attrib_base_index + 3);
+			glVertexAttribIPointer(p_attrib_base_index + 3, 4, GL_UNSIGNED_INT, p_stride * sizeof(float), CAST_INT_TO_UCHAR_PTR(color_custom_offset * sizeof(float)));
+			glVertexAttribDivisor(p_attrib_base_index + 3, 1);
+		}
 	} else {
-		// Set all default instance color and custom data values to 1.0 or 0.0 using a compressed format.
-		uint16_t zero = Math::make_half_float(0.0f);
-		uint16_t one = Math::make_half_float(1.0f);
-		GLuint default_color = (uint32_t(one) << 16) | one;
-		GLuint default_custom = (uint32_t(zero) << 16) | zero;
-		glVertexAttribI4ui(p_attrib_base_index + 3, default_color, default_color, default_custom, default_custom);
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// Same as above; constant default (0,0,0,1) is fine unused.
+		} else {
+			// Set all default instance color and custom data values to 1.0 or 0.0 using a compressed format.
+			uint16_t zero = Math::make_half_float(0.0f);
+			uint16_t one = Math::make_half_float(1.0f);
+			GLuint default_color = (uint32_t(one) << 16) | one;
+			GLuint default_custom = (uint32_t(zero) << 16) | zero;
+			glVertexAttribI4ui(p_attrib_base_index + 3, default_color, default_color, default_custom, default_custom);
+		}
 	}
 }
 

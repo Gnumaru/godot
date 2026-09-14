@@ -33,6 +33,7 @@
 #ifdef GLES2_ENABLED
 
 #include "core/config/project_settings.h"
+#include "drivers/gles2/rasterizer_util_gles2.h"
 #include "drivers/gles2/storage/texture_storage.h"
 
 using namespace GLES2;
@@ -69,19 +70,24 @@ CubemapFilter::CubemapFilter() {
 		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6, qv, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
 
-		glGenVertexArrays(1, &screen_triangle_array);
-		glBindVertexArray(screen_triangle_array);
-		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
-		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
-		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
-		glBindVertexArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
+		// GLES2 simplification: no VAOs in ES 2.0 (bound manually at draw).
+		if (!RasterizerUtilGLES2::is_gles2()) {
+			glGenVertexArrays(1, &screen_triangle_array);
+			glBindVertexArray(screen_triangle_array);
+			glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
+			glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+			glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+			glBindVertexArray(0);
+			glBindBuffer(GL_ARRAY_BUFFER, 0); //unbind
+		}
 	}
 }
 
 CubemapFilter::~CubemapFilter() {
 	glDeleteBuffers(1, &screen_triangle);
-	glDeleteVertexArrays(1, &screen_triangle_array);
+	if (!RasterizerUtilGLES2::is_gles2()) {
+		glDeleteVertexArrays(1, &screen_triangle_array);
+	}
 
 	cubemap_filter.shader.version_free(cubemap_filter.shader_version);
 	singleton = nullptr;
@@ -141,7 +147,14 @@ void CubemapFilter::filter_radiance(GLuint p_source_cubemap, GLuint p_dest_cubem
 
 	int size = p_source_size >> p_layer;
 	glViewport(0, 0, size, size);
-	glBindVertexArray(screen_triangle_array);
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: no VAOs in ES 2.0; bind manually.
+		glBindBuffer(GL_ARRAY_BUFFER, screen_triangle);
+		glVertexAttribPointer(RSE::ARRAY_VERTEX, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 2, nullptr);
+		glEnableVertexAttribArray(RSE::ARRAY_VERTEX);
+	} else {
+		glBindVertexArray(screen_triangle_array);
+	}
 
 	bool success = cubemap_filter.shader.version_bind_shader(cubemap_filter.shader_version, mode);
 	if (!success) {
@@ -191,7 +204,12 @@ void CubemapFilter::filter_radiance(GLuint p_source_cubemap, GLuint p_dest_cubem
 
 		glUniform4fv(cubemap_filter.shader.version_get_uniform(CubemapFilterShaderGLES2::SAMPLE_DIRECTIONS_MIP, cubemap_filter.shader_version, mode), sample_count, sample_directions.ptr());
 		cubemap_filter.shader.version_set_uniform(CubemapFilterShaderGLES2::WEIGHT, weight, cubemap_filter.shader_version, mode);
-		cubemap_filter.shader.version_set_uniform(CubemapFilterShaderGLES2::SAMPLE_COUNT, index, cubemap_filter.shader_version, mode);
+		// GLES2 simplification: count uniform is int on ES 2.0 (no uint).
+		if (RasterizerUtilGLES2::is_gles2()) {
+			cubemap_filter.shader.version_set_uniform(CubemapFilterShaderGLES2::SAMPLE_COUNT, int32_t(index), cubemap_filter.shader_version, mode);
+		} else {
+			cubemap_filter.shader.version_set_uniform(CubemapFilterShaderGLES2::SAMPLE_COUNT, index, cubemap_filter.shader_version, mode);
+		}
 	}
 
 	for (int i = 0; i < 6; i++) {

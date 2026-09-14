@@ -31,7 +31,11 @@ uniform samplerCube source_cube; //texunit:0
 uniform int face_id;
 
 #ifndef MODE_DIRECT_WRITE
+#ifdef USE_GLES2_ES2
+uniform int sample_count;
+#else
 uniform uint sample_count;
+#endif
 uniform vec4 sample_directions_mip[MAX_SAMPLE_COUNT];
 uniform float weight;
 #endif
@@ -54,6 +58,24 @@ vec3 srgb_to_linear(vec3 color) {
 }
 
 vec3 texelCoordToVec(vec2 uv, int faceID) {
+#ifdef USE_GLES2_ES2
+	// ES 2.0 has no dynamic array indexing in fragment shaders; unrolled.
+	vec3 r = vec3(0.0);
+	if (faceID == 0) {
+		r = uv.x * vec3(0.0, 0.0, -1.0) + uv.y * vec3(0.0, -1.0, 0.0) + vec3(1.0, 0.0, 0.0);
+	} else if (faceID == 1) {
+		r = uv.x * vec3(0.0, 0.0, 1.0) + uv.y * vec3(0.0, -1.0, 0.0) + vec3(-1.0, 0.0, 0.0);
+	} else if (faceID == 2) {
+		r = uv.x * vec3(1.0, 0.0, 0.0) + uv.y * vec3(0.0, 0.0, 1.0) + vec3(0.0, 1.0, 0.0);
+	} else if (faceID == 3) {
+		r = uv.x * vec3(1.0, 0.0, 0.0) + uv.y * vec3(0.0, 0.0, -1.0) + vec3(0.0, -1.0, 0.0);
+	} else if (faceID == 4) {
+		r = uv.x * vec3(1.0, 0.0, 0.0) + uv.y * vec3(0.0, -1.0, 0.0) + vec3(0.0, 0.0, 1.0);
+	} else {
+		r = uv.x * vec3(-1.0, 0.0, 0.0) + uv.y * vec3(0.0, -1.0, 0.0) + vec3(0.0, 0.0, -1.0);
+	}
+	return normalize(r);
+#else
 	mat3 faceUvVectors[6];
 
 	// -x
@@ -89,6 +111,7 @@ vec3 texelCoordToVec(vec2 uv, int faceID) {
 	// out = u * s_faceUv[0] + v * s_faceUv[1] + s_faceUv[2].
 	vec3 result = (faceUvVectors[faceID][0] * uv.x) + (faceUvVectors[faceID][1] * uv.y) + faceUvVectors[faceID][2];
 	return normalize(result);
+#endif
 }
 
 void main() {
@@ -97,7 +120,11 @@ void main() {
 	vec3 N = texelCoordToVec(uv, face_id);
 
 #ifdef MODE_DIRECT_WRITE
+#ifdef USE_GLES2_ES2
+	frag_color = vec4(textureCube(source_cube, N).rgb, 1.0);
+#else
 	frag_color = vec4(textureLod(source_cube, N, 0.0).rgb, 1.0);
+#endif
 #else
 
 	vec4 sum = vec4(0.0);
@@ -107,10 +134,17 @@ void main() {
 	T[1] = cross(N, T[0]);
 	T[2] = N;
 
-	for (uint sample_num = 0u; sample_num < sample_count; sample_num++) {
+	for (int sample_num = 0; sample_num < MAX_SAMPLE_COUNT; sample_num++) {
+		if (sample_num >= int(sample_count)) {
+			break;
+		}
 		vec4 sample_direction_mip = sample_directions_mip[sample_num];
 		vec3 L = T * sample_direction_mip.xyz;
+#ifdef USE_GLES2_ES2
+		vec3 val = textureCube(source_cube, L, sample_direction_mip.w).rgb;
+#else
 		vec3 val = textureLod(source_cube, L, sample_direction_mip.w).rgb;
+#endif
 		// Mix using linear
 		val = srgb_to_linear(val);
 		sum.rgb += val * sample_direction_mip.z;
@@ -120,5 +154,10 @@ void main() {
 
 	sum.rgb = linear_to_srgb(sum.rgb);
 	frag_color = vec4(sum.rgb, 1.0);
+#endif
+
+#ifdef USE_GLES2_ES2
+	// Single ES2 render target (frag_color is a plain global there).
+	gl_FragColor = frag_color;
 #endif
 }

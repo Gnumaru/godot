@@ -106,7 +106,7 @@ vec3 allenwp_curve(vec3 x) {
 	vec3 t = pow(x, vec3(awp_contrast));
 	t = t / (t + awp_toe_a);
 
-	return mix(s, t, lessThan(x, vec3(awp_crossover_point)));
+	return mix(s, t, vec3(lessThan(x, vec3(awp_crossover_point))));
 }
 
 // This is an approximation and simplification of EaryChow's AgX implementation that is used by Blender.

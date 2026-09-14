@@ -441,7 +441,7 @@ private:
 			float fog_aerial_perspective;
 			float time;
 
-			float radiance_inverse_xform[12];
+			float radiance_inverse_xform[16];
 
 			uint32_t directional_light_count;
 			float z_far;

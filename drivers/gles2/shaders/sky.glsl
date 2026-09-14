@@ -61,10 +61,18 @@ uniform vec4 global_shader_uniforms[MAX_GLOBAL_SHADER_UNIFORMS];
 struct DirectionalLightData {
 	vec4 direction_energy;
 	vec4 color_size;
+#ifdef USE_GLES2_ES2
+	int enabled_bake_mode;
+#else
 	uint enabled_bake_mode;
+#endif
 	float shadow_opacity;
 	float specular;
+#ifdef USE_GLES2_ES2
+	int mask;
+#else
 	uint mask;
+#endif
 };
 
 // GLES2 simplification (low-end 3D): UBO converted to plain struct uniform
@@ -74,7 +82,11 @@ struct DirectionalLights {
 };
 uniform DirectionalLights directional_lights;
 
+#ifdef USE_GLES2_ES2
+#define DIRECTIONAL_LIGHT_ENABLED 1
+#else
 #define DIRECTIONAL_LIGHT_ENABLED uint(1 << 0)
+#endif
 
 // mat4 is a waste of space, but we don't have an easy way to set a mat3 uniform for now
 uniform mat4 orientation;
@@ -90,7 +102,7 @@ uniform float fog_sun_scatter;
 uniform bool fog_enabled;
 uniform float fog_density;
 uniform float fog_sky_affect;
-uniform uint directional_light_count;
+uniform int directional_light_count;
 
 /* clang-format off */
 
@@ -150,7 +162,7 @@ vec4 fog_process(vec3 view, vec3 sky_color) {
 	if (fog_sun_scatter > 0.001) {
 		vec4 sun_scatter = vec4(0.0);
 		float sun_total = 0.0;
-		for (uint i = 0u; i < directional_light_count; i++) {
+		for (int i = 0; i < directional_light_count; i++) {
 			vec3 light_color = srgb_to_linear(directional_lights.data[i].color_size.xyz) * directional_lights.data[i].direction_energy.w;
 			float light_amount = pow(max(dot(view, directional_lights.data[i].direction_energy.xyz), 0.0), 8.0) * M_PI;
 			fog_color += light_color * light_amount * fog_sun_scatter;
@@ -223,10 +235,18 @@ void main() {
 
 #ifdef USE_CUBEMAP_PASS
 #ifdef USES_HALF_RES_COLOR
+#ifdef USE_GLES2_ES2
+	half_res_color = textureCube(half_res, cube_normal);
+#else
 	half_res_color = texture(half_res, cube_normal);
 #endif
+#endif
 #ifdef USES_QUARTER_RES_COLOR
+#ifdef USE_GLES2_ES2
+	quarter_res_color = textureCube(quarter_res, cube_normal);
+#else
 	quarter_res_color = texture(quarter_res, cube_normal);
+#endif
 #endif
 #else
 #ifdef USES_HALF_RES_COLOR
@@ -279,5 +299,10 @@ void main() {
 
 #ifdef USE_DEBANDING
 	frag_color.rgb += interleaved_gradient_noise(gl_FragCoord.xy) * sky_energy_multiplier * luminance_multiplier;
+#endif
+
+#ifdef USE_GLES2_ES2
+	// Single ES2 render target.
+	gl_FragColor = frag_color;
 #endif
 }

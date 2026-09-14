@@ -40,6 +40,7 @@
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/mesh_storage.h"
 #include "servers/rendering/storage/utilities.h"
+#include "drivers/gles2/rasterizer_util_gles2.h"
 
 #include <platform_gl.h>
 
@@ -428,6 +429,17 @@ public:
 
 		s->version_lock.lock();
 
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// GLES2 simplification: no VAOs in ES 2.0; re-apply global attrib
+			// state every draw instead of caching it.
+			Mesh::Surface::Version dummy_version;
+			dummy_version.vertex_array = 0;
+			_mesh_surface_generate_version_for_input_mask(dummy_version, s, p_input_mask, p_uses_motion_vectors);
+			r_vertex_array_gl = 0;
+			s->version_lock.unlock();
+			return;
+		}
+
 		// There will never be more than 3 or 4 versions, so iterating is the fastest way.
 
 		for (uint32_t i = 0; i < s->version_count; i++) {
@@ -481,6 +493,16 @@ public:
 		uint32_t previous_buffer = p_uses_motion_vectors && (RSG::rasterizer->get_frame_number() == mis->last_change) ? mis->prev_vertex_buffer : current_buffer;
 
 		s->version_lock.lock();
+
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// GLES2 simplification: no VAOs in ES 2.0 (see above).
+			Mesh::Surface::Version dummy_version;
+			dummy_version.vertex_array = 0;
+			_mesh_surface_generate_version_for_input_mask(dummy_version, s, p_input_mask, p_uses_motion_vectors, mis, current_buffer, previous_buffer);
+			r_vertex_array_gl = 0;
+			s->version_lock.unlock();
+			return;
+		}
 
 		//there will never be more than, at much, 3 or 4 versions, so iterating is the fastest way
 

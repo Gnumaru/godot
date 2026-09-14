@@ -1258,22 +1258,25 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["QUARTER_RES_COLOR"] = "quarter_res_color";
 		actions.renames["RADIANCE"] = "radiance";
 		actions.renames["FOG"] = "custom_fog";
-		actions.renames["LIGHT0_ENABLED"] = "bool(directional_lights.data[0].enabled_bake_mode & DIRECTIONAL_LIGHT_ENABLED)";
+		// GLES2 simplification: no uint/bit ops on ES 2.0 (enabled bit tested
+		// via mod instead).
+		const String light_enabled_op = RasterizerUtilGLES2::is_gles2() ? "mod(float(@.enabled_bake_mode), 2.0) > 0.5" : "bool(@.enabled_bake_mode & DIRECTIONAL_LIGHT_ENABLED)";
+		actions.renames["LIGHT0_ENABLED"] = light_enabled_op.replace("@", "directional_lights.data[0]");
 		actions.renames["LIGHT0_DIRECTION"] = "directional_lights.data[0].direction_energy.xyz";
 		actions.renames["LIGHT0_ENERGY"] = "directional_lights.data[0].direction_energy.w";
 		actions.renames["LIGHT0_COLOR"] = "directional_lights.data[0].color_size.xyz";
 		actions.renames["LIGHT0_SIZE"] = "directional_lights.data[0].color_size.w";
-		actions.renames["LIGHT1_ENABLED"] = "bool(directional_lights.data[1].enabled_bake_mode & DIRECTIONAL_LIGHT_ENABLED)";
+		actions.renames["LIGHT1_ENABLED"] = light_enabled_op.replace("@", "directional_lights.data[1]");
 		actions.renames["LIGHT1_DIRECTION"] = "directional_lights.data[1].direction_energy.xyz";
 		actions.renames["LIGHT1_ENERGY"] = "directional_lights.data[1].direction_energy.w";
 		actions.renames["LIGHT1_COLOR"] = "directional_lights.data[1].color_size.xyz";
 		actions.renames["LIGHT1_SIZE"] = "directional_lights.data[1].color_size.w";
-		actions.renames["LIGHT2_ENABLED"] = "bool(directional_lights.data[2].enabled_bake_mode & DIRECTIONAL_LIGHT_ENABLED)";
+		actions.renames["LIGHT2_ENABLED"] = light_enabled_op.replace("@", "directional_lights.data[2]");
 		actions.renames["LIGHT2_DIRECTION"] = "directional_lights.data[2].direction_energy.xyz";
 		actions.renames["LIGHT2_ENERGY"] = "directional_lights.data[2].direction_energy.w";
 		actions.renames["LIGHT2_COLOR"] = "directional_lights.data[2].color_size.xyz";
 		actions.renames["LIGHT2_SIZE"] = "directional_lights.data[2].color_size.w";
-		actions.renames["LIGHT3_ENABLED"] = "bool(directional_lights.data[3].enabled_bake_mode & DIRECTIONAL_LIGHT_ENABLED)";
+		actions.renames["LIGHT3_ENABLED"] = light_enabled_op.replace("@", "directional_lights.data[3]");
 		actions.renames["LIGHT3_DIRECTION"] = "directional_lights.data[3].direction_energy.xyz";
 		actions.renames["LIGHT3_ENERGY"] = "directional_lights.data[3].direction_energy.w";
 		actions.renames["LIGHT3_COLOR"] = "directional_lights.data[3].color_size.xyz";

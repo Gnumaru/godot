@@ -90,3 +90,42 @@ vec4 godot_unpackSnorm4x8(uint p) {
 #define packSnorm4x8 godot_packSnorm4x8
 #define unpackSnorm4x8 godot_unpackSnorm4x8
 #endif // !USE_GLES2_ES2
+
+#ifdef USE_GLES2_ES2
+// ES 2.0 has no uint/bit ops. Layer/bake tests below match the integer bit
+// tests of the 300 es path (operands are small non-negative ints).
+bool mask_overlaps_mask(int a, int b) {
+	float fa = float(a);
+	float fb = float(b);
+	for (int k = 0; k < 20; k++) {
+		if (mod(floor(fa / exp2(float(k))), 2.0) > 0.5 && mod(floor(fb / exp2(float(k))), 2.0) > 0.5) {
+			return true;
+		}
+	}
+	return false;
+}
+#define MASK_OVERLAP(a, b) mask_overlaps_mask(a, b)
+#define BAKE_STATIC_SET(v) (mod(floor(float(v) / 2.0), 2.0) > 0.5)
+#define BAKE_DYNAMIC_SET(v) (mod(floor(float(v) / 4.0), 2.0) > 0.5)
+#define LIGHT_ENABLED_SET(v) (mod(float(v), 2.0) > 0.5)
+#else
+#define MASK_OVERLAP(a, b) bool((a) & (b))
+#define BAKE_STATIC_SET(v) bool((v) & DIRECTIONAL_LIGHT_BAKE_STATIC)
+#define BAKE_DYNAMIC_SET(v) bool((v) & DIRECTIONAL_LIGHT_BAKE_DYNAMIC)
+#define LIGHT_ENABLED_SET(v) bool((v) & DIRECTIONAL_LIGHT_ENABLED)
+#endif // USE_GLES2_ES2
+
+#ifdef USE_GLES2_ES2
+// ES 2.0 has no transpose()/inverse(): adjugate over determinant.
+mat3 godot_transpose_inverse(mat3 m) {
+	vec3 c0 = m[0];
+	vec3 c1 = m[1];
+	vec3 c2 = m[2];
+	vec3 r0 = vec3(c1.y * c2.z - c1.z * c2.y, c1.z * c2.x - c1.x * c2.z, c1.x * c2.y - c1.y * c2.x);
+	vec3 r1 = vec3(c2.y * c0.z - c2.z * c0.y, c2.z * c0.x - c2.x * c0.z, c2.x * c0.y - c2.y * c0.x);
+	vec3 r2 = vec3(c0.y * c1.z - c0.z * c1.y, c0.z * c1.x - c0.x * c1.z, c0.x * c1.y - c0.y * c1.x);
+	float det = dot(c0, r0);
+	det = det == 0.0 ? 1.0 : det;
+	return mat3(vec3(r0.x, r1.x, r2.x) / det, vec3(r0.y, r1.y, r2.y) / det, vec3(r0.z, r1.z, r2.z) / det);
+}
+#endif // USE_GLES2_ES2
