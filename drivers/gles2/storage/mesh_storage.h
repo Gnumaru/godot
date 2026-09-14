@@ -571,7 +571,7 @@ public:
 	void _update_dirty_multimeshes();
 	void _update_dirty_multimesh(MultiMesh *p_multimesh, bool p_uses_motion_vectors);
 
-	void multimesh_vertex_attrib_setup(GLuint p_instance_buffer, uint32_t p_stride, bool p_uses_format_2d, bool p_has_color_or_custom_data, int p_attrib_base_index);
+	void multimesh_vertex_attrib_setup(GLuint p_instance_buffer, uint32_t p_stride, bool p_uses_format_2d, bool p_has_color_or_custom_data, bool p_has_colors, int p_attrib_base_index);
 
 	_FORCE_INLINE_ RSE::MultimeshTransformFormat multimesh_get_transform_format(RID p_multimesh) const {
 		MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);

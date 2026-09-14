@@ -167,7 +167,7 @@ layout(location = 12) in highp vec4 instance_xform0;
 layout(location = 13) in highp vec4 instance_xform1;
 layout(location = 14) in highp vec4 instance_xform2;
 #ifdef USE_GLES2_ES2
-layout(location = 15) in highp vec4 instance_color_custom_data; // unused (see below)
+layout(location = 15) in highp vec4 instance_color_custom_data; // Unpacked instance color (custom data unsupported).
 #else
 layout(location = 15) in highp uvec4 instance_color_custom_data; // Color packed into xy, Custom data into zw.
 #endif
@@ -681,8 +681,10 @@ void vertex_shader(vec4 vertex_angle_attrib_input,
 	color_interp = color_attrib_input;
 #ifdef USE_INSTANCING
 #ifdef USE_GLES2_ES2
-	// ES 2.0 limitation: instance colors stay unpacked (no uint attribs);
-	// instanced meshes render unmodulated (same as 2D).
+	// ES 2.0 has no uint attribs; instance colors are uploaded unpacked
+	// (white when the multimesh has no colors, so this stays a no-op there).
+	vec4 instance_color = instance_color_custom_data_input;
+	color_interp *= instance_color;
 #else
 	vec4 instance_color;
 	instance_color.xy = unpackHalf2x16(instance_color_custom_data_input.x);

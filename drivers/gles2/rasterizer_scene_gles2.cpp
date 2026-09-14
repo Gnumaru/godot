@@ -4371,10 +4371,11 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 					break;
 				}
 
-				bool uses_format_2d = inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D;
-				bool has_color_or_custom_data = (inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR) || (inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA);
-				// Current data multimesh vertex attrib data begins at index 12.
-				mesh_storage->multimesh_vertex_attrib_setup(instance_buffer, stride, uses_format_2d, has_color_or_custom_data, 12);
+			bool uses_format_2d = inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_FORMAT_2D;
+			bool has_color_or_custom_data = (inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR) || (inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_HAS_CUSTOM_DATA);
+			bool has_colors = !(inst->flags_cache & INSTANCE_DATA_FLAG_PARTICLES) && (inst->flags_cache & INSTANCE_DATA_FLAG_MULTIMESH_HAS_COLOR);
+			// Current data multimesh vertex attrib data begins at index 12.
+			mesh_storage->multimesh_vertex_attrib_setup(instance_buffer, stride, uses_format_2d, has_color_or_custom_data, has_colors, 12);
 
 				if (p_pass_mode == PASS_MODE_MOTION_VECTORS_GLES2) {
 					GLuint prev_instance_buffer = 0;
@@ -4403,8 +4404,8 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 						}
 					}
 
-					// Previous data multimesh vertex attrib data begins at index 18.
-					mesh_storage->multimesh_vertex_attrib_setup(secondary_instance_buffer, stride, uses_format_2d, has_color_or_custom_data, 18);
+				// Previous data multimesh vertex attrib data begins at index 18.
+				mesh_storage->multimesh_vertex_attrib_setup(secondary_instance_buffer, stride, uses_format_2d, has_color_or_custom_data, has_colors, 18);
 				}
 
 				if (use_wireframe) {

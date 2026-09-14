@@ -1861,8 +1861,18 @@ void MeshStorage::_multimesh_instance_set_color(RID p_multimesh, int p_index, co
 		float *w = multimesh->data_cache.ptrw();
 
 		float *dataptr = w + p_index * multimesh->stride_cache + multimesh->color_offset_cache;
-		uint16_t val[4] = { Math::make_half_float(p_color.r), Math::make_half_float(p_color.g), Math::make_half_float(p_color.b), Math::make_half_float(p_color.a) };
-		memcpy(dataptr, val, 2 * 4);
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// GLES2 simplification: no uint attribs in ES 2.0, so instance
+			// colors are stored unpacked across the color and custom slots
+			// (custom data is unsupported and stays dropped, see below).
+			dataptr[0] = p_color.r;
+			dataptr[1] = p_color.g;
+			dataptr[2] = p_color.b;
+			dataptr[3] = p_color.a;
+		} else {
+			uint16_t val[4] = { Math::make_half_float(p_color.r), Math::make_half_float(p_color.g), Math::make_half_float(p_color.b), Math::make_half_float(p_color.a) };
+			memcpy(dataptr, val, 2 * 4);
+		}
 	}
 
 	_multimesh_mark_dirty(multimesh, p_index, false);
@@ -1873,6 +1883,12 @@ void MeshStorage::_multimesh_instance_set_custom_data(RID p_multimesh, int p_ind
 	ERR_FAIL_NULL(multimesh);
 	ERR_FAIL_INDEX(p_index, multimesh->instances);
 	ERR_FAIL_COND(!multimesh->uses_custom_data);
+
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// GLES2 simplification: custom data is unsupported in ES 2.0 (the
+		// color and custom slots carry the unpacked instance color instead).
+		return;
+	}
 
 	_multimesh_make_local(multimesh);
 
@@ -1988,12 +2004,20 @@ Color MeshStorage::_multimesh_instance_get_color(RID p_multimesh, int p_index) c
 		const float *r = multimesh->data_cache.ptr();
 
 		const float *dataptr = r + p_index * multimesh->stride_cache + multimesh->color_offset_cache;
-		uint16_t raw_data[4];
-		memcpy(raw_data, dataptr, 2 * 4);
-		c.r = Math::half_to_float(raw_data[0]);
-		c.g = Math::half_to_float(raw_data[1]);
-		c.b = Math::half_to_float(raw_data[2]);
-		c.a = Math::half_to_float(raw_data[3]);
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// Stored unpacked (see _multimesh_instance_set_color).
+			c.r = dataptr[0];
+			c.g = dataptr[1];
+			c.b = dataptr[2];
+			c.a = dataptr[3];
+		} else {
+			uint16_t raw_data[4];
+			memcpy(raw_data, dataptr, 2 * 4);
+			c.r = Math::half_to_float(raw_data[0]);
+			c.g = Math::half_to_float(raw_data[1]);
+			c.b = Math::half_to_float(raw_data[2]);
+			c.a = Math::half_to_float(raw_data[3]);
+		}
 	}
 
 	return c;
@@ -2004,6 +2028,11 @@ Color MeshStorage::_multimesh_instance_get_custom_data(RID p_multimesh, int p_in
 	ERR_FAIL_NULL_V(multimesh, Color());
 	ERR_FAIL_INDEX_V(p_index, multimesh->instances, Color());
 	ERR_FAIL_COND_V(!multimesh->uses_custom_data, Color());
+
+	if (RasterizerUtilGLES2::is_gles2()) {
+		// Unsupported (see _multimesh_instance_set_custom_data).
+		return Color();
+	}
 
 	_multimesh_make_local(multimesh);
 
@@ -2063,14 +2092,26 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 			if (multimesh->uses_colors) {
 				float *dataptr = w + i * old_stride + (multimesh->xform_format == RSE::MULTIMESH_TRANSFORM_2D ? 8 : 12);
 				float *newptr = w + i * multimesh->stride_cache + multimesh->color_offset_cache;
-				uint16_t val[4] = { Math::make_half_float(dataptr[0]), Math::make_half_float(dataptr[1]), Math::make_half_float(dataptr[2]), Math::make_half_float(dataptr[3]) };
-				memcpy(newptr, val, 2 * 4);
+				if (RasterizerUtilGLES2::is_gles2()) {
+					// Stored unpacked across the color and custom slots (see _multimesh_instance_set_color).
+					newptr[0] = dataptr[0];
+					newptr[1] = dataptr[1];
+					newptr[2] = dataptr[2];
+					newptr[3] = dataptr[3];
+				} else {
+					uint16_t val[4] = { Math::make_half_float(dataptr[0]), Math::make_half_float(dataptr[1]), Math::make_half_float(dataptr[2]), Math::make_half_float(dataptr[3]) };
+					memcpy(newptr, val, 2 * 4);
+				}
 			}
 			if (multimesh->uses_custom_data) {
 				float *dataptr = w + i * old_stride + (multimesh->xform_format == RSE::MULTIMESH_TRANSFORM_2D ? 8 : 12) + (multimesh->uses_colors ? 4 : 0);
 				float *newptr = w + i * multimesh->stride_cache + multimesh->custom_data_offset_cache;
-				uint16_t val[4] = { Math::make_half_float(dataptr[0]), Math::make_half_float(dataptr[1]), Math::make_half_float(dataptr[2]), Math::make_half_float(dataptr[3]) };
-				memcpy(newptr, val, 2 * 4);
+				if (RasterizerUtilGLES2::is_gles2()) {
+					// Unsupported, dropped (see _multimesh_instance_set_custom_data).
+				} else {
+					uint16_t val[4] = { Math::make_half_float(dataptr[0]), Math::make_half_float(dataptr[1]), Math::make_half_float(dataptr[2]), Math::make_half_float(dataptr[3]) };
+					memcpy(newptr, val, 2 * 4);
+				}
 			}
 		}
 
@@ -2172,22 +2213,38 @@ Vector<float> MeshStorage::_multimesh_get_buffer(RID p_multimesh) const {
 			if (multimesh->uses_colors) {
 				float *newptr = w + i * new_stride + (multimesh->xform_format == RSE::MULTIMESH_TRANSFORM_2D ? 8 : 12);
 				const float *oldptr = r + i * multimesh->stride_cache + multimesh->color_offset_cache;
-				uint16_t raw_data[4];
-				memcpy(raw_data, oldptr, 2 * 4);
-				newptr[0] = Math::half_to_float(raw_data[0]);
-				newptr[1] = Math::half_to_float(raw_data[1]);
-				newptr[2] = Math::half_to_float(raw_data[2]);
-				newptr[3] = Math::half_to_float(raw_data[3]);
+				if (RasterizerUtilGLES2::is_gles2()) {
+					// Stored unpacked (see _multimesh_instance_set_color).
+					newptr[0] = oldptr[0];
+					newptr[1] = oldptr[1];
+					newptr[2] = oldptr[2];
+					newptr[3] = oldptr[3];
+				} else {
+					uint16_t raw_data[4];
+					memcpy(raw_data, oldptr, 2 * 4);
+					newptr[0] = Math::half_to_float(raw_data[0]);
+					newptr[1] = Math::half_to_float(raw_data[1]);
+					newptr[2] = Math::half_to_float(raw_data[2]);
+					newptr[3] = Math::half_to_float(raw_data[3]);
+				}
 			}
 			if (multimesh->uses_custom_data) {
 				float *newptr = w + i * new_stride + (multimesh->xform_format == RSE::MULTIMESH_TRANSFORM_2D ? 8 : 12) + (multimesh->uses_colors ? 4 : 0);
 				const float *oldptr = r + i * multimesh->stride_cache + multimesh->custom_data_offset_cache;
-				uint16_t raw_data[4];
-				memcpy(raw_data, oldptr, 2 * 4);
-				newptr[0] = Math::half_to_float(raw_data[0]);
-				newptr[1] = Math::half_to_float(raw_data[1]);
-				newptr[2] = Math::half_to_float(raw_data[2]);
-				newptr[3] = Math::half_to_float(raw_data[3]);
+				if (RasterizerUtilGLES2::is_gles2()) {
+					// Unsupported, dropped (see _multimesh_instance_set_custom_data).
+					newptr[0] = 0.0f;
+					newptr[1] = 0.0f;
+					newptr[2] = 0.0f;
+					newptr[3] = 0.0f;
+				} else {
+					uint16_t raw_data[4];
+					memcpy(raw_data, oldptr, 2 * 4);
+					newptr[0] = Math::half_to_float(raw_data[0]);
+					newptr[1] = Math::half_to_float(raw_data[1]);
+					newptr[2] = Math::half_to_float(raw_data[2]);
+					newptr[3] = Math::half_to_float(raw_data[3]);
+				}
 			}
 		}
 		return decompressed;
@@ -2315,7 +2372,7 @@ void MeshStorage::_update_dirty_multimesh(MultiMesh *p_multimesh, bool p_uses_mo
 	}
 }
 
-void GLES2::MeshStorage::multimesh_vertex_attrib_setup(GLuint p_instance_buffer, uint32_t p_stride, bool p_uses_format_2d, bool p_has_color_or_custom_data, int p_attrib_base_index) {
+void GLES2::MeshStorage::multimesh_vertex_attrib_setup(GLuint p_instance_buffer, uint32_t p_stride, bool p_uses_format_2d, bool p_has_color_or_custom_data, bool p_has_colors, int p_attrib_base_index) {
 	glBindBuffer(GL_ARRAY_BUFFER, p_instance_buffer);
 
 	glEnableVertexAttribArray(p_attrib_base_index + 0);
@@ -2333,8 +2390,18 @@ void GLES2::MeshStorage::multimesh_vertex_attrib_setup(GLuint p_instance_buffer,
 	if (p_has_color_or_custom_data) {
 		uint32_t color_custom_offset = p_uses_format_2d ? 8 : 12;
 		if (RasterizerUtilGLES2::is_gles2()) {
-			// GLES2 simplification: no uint attribs in ES 2.0 and instance
-			// colors stay unpacked (see scene.glsl); leave disabled.
+			// GLES2 simplification: no uint attribs in ES 2.0. Instance
+			// colors are stored unpacked (see _multimesh_instance_set_color);
+			// custom data is unsupported. Without colors, feed constant
+			// white so instanced meshes render unmodulated.
+			if (p_has_colors) {
+				glEnableVertexAttribArray(p_attrib_base_index + 3);
+				glVertexAttribPointer(p_attrib_base_index + 3, 4, GL_FLOAT, GL_FALSE, p_stride * sizeof(float), CAST_INT_TO_UCHAR_PTR(color_custom_offset * sizeof(float)));
+				glVertexAttribDivisor(p_attrib_base_index + 3, 1);
+			} else {
+				glDisableVertexAttribArray(p_attrib_base_index + 3);
+				glVertexAttrib4f(p_attrib_base_index + 3, 1.0f, 1.0f, 1.0f, 1.0f);
+			}
 		} else {
 			glEnableVertexAttribArray(p_attrib_base_index + 3);
 			glVertexAttribIPointer(p_attrib_base_index + 3, 4, GL_UNSIGNED_INT, p_stride * sizeof(float), CAST_INT_TO_UCHAR_PTR(color_custom_offset * sizeof(float)));
@@ -2342,7 +2409,9 @@ void GLES2::MeshStorage::multimesh_vertex_attrib_setup(GLuint p_instance_buffer,
 		}
 	} else {
 		if (RasterizerUtilGLES2::is_gles2()) {
-			// Same as above; constant default (0,0,0,1) is fine unused.
+			// Same as above; constant white keeps COLOR_USED materials unmodulated.
+			glDisableVertexAttribArray(p_attrib_base_index + 3);
+			glVertexAttrib4f(p_attrib_base_index + 3, 1.0f, 1.0f, 1.0f, 1.0f);
 		} else {
 			// Set all default instance color and custom data values to 1.0 or 0.0 using a compressed format.
 			uint16_t zero = Math::make_half_float(0.0f);
