@@ -88,9 +88,17 @@ uniform samplerCube source_cube; // texunit:0
 #else // ~(defined(CUBE_TO_OCTAHEDRAL) || defined(CUBE_TO_PANORAMA))
 
 #if defined(USE_TEXTURE_3D)
+#ifdef USE_GLES2_ES2
+uniform sampler2D source; // texunit:0
+#else
 uniform sampler3D source_3d; // texunit:0
+#endif
 #elif defined(USE_TEXTURE_2D_ARRAY)
+#ifdef USE_GLES2_ES2
+uniform sampler2D source; // texunit:0
+#else
 uniform sampler2DArray source_2d_array; // texunit:0
+#endif
 #else
 uniform sampler2D source; // texunit:0
 #endif
@@ -157,9 +165,17 @@ void main() {
 #endif // APPLY_LENS_DISTORTION
 
 #ifdef USE_TEXTURE_3D
-		vec4 color = textureLod(source_3d, vec3(uv, layer), lod);
+#ifdef USE_GLES2_ES2
+	vec4 color = texture(source, uv); // No 3D textures on ES2; layer ignored.
+#else
+	vec4 color = textureLod(source_3d, vec3(uv, layer), lod);
+#endif
 #elif defined(USE_TEXTURE_2D_ARRAY)
+#ifdef USE_GLES2_ES2
+	vec4 color = texture(source, uv); // No texture arrays on ES2; layer ignored.
+#else
 	vec4 color = textureLod(source_2d_array, vec3(uv, layer), lod);
+#endif
 #else
 	vec4 color = texture(source, uv);
 #endif // USE_TEXTURE_3D
@@ -222,7 +238,11 @@ void main() {
 #ifdef CUBE_TO_OCTAHEDRAL
 	// Treat the UV coordinates as 0-1 encoded octahedral coordinates.
 	vec3 dir = oct_to_vec3(uv_interp * 2.0 - 1.0);
+#ifdef USE_GLES2_ES2
+	frag_color = textureCube(source_cube, dir);
+#else
 	frag_color = texture(source_cube, dir);
+#endif
 
 #endif
 
@@ -238,7 +258,11 @@ void main() {
 	normal.y = cos(theta);
 	normal.z = cos(phi) * sin(theta) * -1.0;
 
+#ifdef USE_GLES2_ES2
+	vec3 color = srgb_to_linear(textureCube(source_cube, normal, mip_level).rgb);
+#else
 	vec3 color = srgb_to_linear(textureLod(source_cube, normal, mip_level).rgb);
+#endif
 	frag_color = vec4(color, 1.0);
 
 #endif

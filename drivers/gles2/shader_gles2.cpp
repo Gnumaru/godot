@@ -732,7 +732,14 @@ void ShaderGLES2::_compile_specialization(Version::Specialization &spec, uint32_
 
 	// GLES2 simplification: pin attribute locations (the ES 2.0 target has no
 	// layout qualifiers; ignored when explicit layouts exist, so harmless).
+	// Locations past the hardware limit (e.g. the motion-vector prev_* inputs
+	// at 16..21, unused when motion vectors are off) cannot be bound;
+	// attempting it is a GL error on strict drivers, so skip them.
+	const GLint max_vertex_attribs = GLES2::Config::get_singleton()->max_vertex_attribs;
 	for (int i = 0; i < attribute_count; i++) {
+		if (max_vertex_attribs > 0 && attribute_pairs[i].location >= max_vertex_attribs) {
+			continue;
+		}
 		glBindAttribLocation(spec.id, attribute_pairs[i].location, attribute_pairs[i].name);
 	}
 
