@@ -1610,17 +1610,32 @@ vec4 pack_shadow_depth(float p_depth) {
 
 #ifndef DISABLE_LIGHTMAP
 #ifdef USE_LIGHTMAP
+#ifdef USE_GLES2_ES2
+uniform mediump sampler2D lightmap_textures; //texunit:-4
+uniform lowp sampler2D shadowmask_textures; //texunit:-5
+uniform lowp int lightmap_slice;
+#else
 uniform mediump sampler2DArray lightmap_textures; //texunit:-4
 uniform lowp sampler2DArray shadowmask_textures; //texunit:-5
 uniform lowp uint lightmap_slice;
+#endif
 uniform highp vec4 lightmap_uv_scale;
 uniform float lightmap_exposure_normalization;
+#ifdef USE_GLES2_ES2
+uniform int lightmap_shadowmask_mode;
+
+#define SHADOWMASK_MODE_NONE 0
+#define SHADOWMASK_MODE_REPLACE 1
+#define SHADOWMASK_MODE_OVERLAY 2
+#define SHADOWMASK_MODE_ONLY 3
+#else
 uniform uint lightmap_shadowmask_mode;
 
 #define SHADOWMASK_MODE_NONE uint(0)
 #define SHADOWMASK_MODE_REPLACE uint(1)
 #define SHADOWMASK_MODE_OVERLAY uint(2)
 #define SHADOWMASK_MODE_ONLY uint(3)
+#endif
 
 #ifdef LIGHTMAP_BICUBIC_FILTER
 uniform highp vec2 lightmap_texture_size;
@@ -2745,7 +2760,12 @@ void main() {
 #ifdef LIGHTMAP_BICUBIC_FILTER
 		ambient_light += textureArray_bicubic(lightmap_textures, uvw, lightmap_texture_size).rgb * lightmap_exposure_normalization;
 #else
+#ifdef USE_GLES2_ES2
+		// Single 2D slice bound per draw (no array textures in ES 2.0).
+		ambient_light += texture2D(lightmap_textures, uvw.xy).rgb * lightmap_exposure_normalization;
+#else
 		ambient_light += textureLod(lightmap_textures, uvw, 0.0).rgb * lightmap_exposure_normalization;
+#endif
 #endif
 #endif
 	}
@@ -3022,7 +3042,11 @@ void main() {
 #ifdef LIGHTMAP_BICUBIC_FILTER
 		shadowmask = textureArray_bicubic(shadowmask_textures, uvw, lightmap_texture_size).x;
 #else
+#ifdef USE_GLES2_ES2
+		shadowmask = texture2D(shadowmask_textures, uvw.xy).x;
+#else
 		shadowmask = textureLod(shadowmask_textures, uvw, 0.0).x;
+#endif
 #endif
 	}
 #endif //USE_LIGHTMAP

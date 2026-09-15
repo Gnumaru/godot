@@ -1022,6 +1022,13 @@ void TextureStorage::texture_free(RID p_texture) {
 		GLES2::Utilities::get_singleton()->texture_free_data(t->tex_id);
 		t->tex_id = 0;
 	}
+	for (int i = 0; i < t->slice_texids.size(); i++) {
+		if (t->slice_texids[i] != 0) {
+			GLES2::Utilities::get_singleton()->texture_free_data(t->slice_texids[i]);
+			t->slice_texids.write[i] = 0;
+		}
+	}
+	t->slice_texids.clear();
 
 	texture_atlas_remove_texture(p_texture);
 
@@ -2005,6 +2012,42 @@ void TextureStorage::texture_set_data(RID p_texture, const Ref<Image> &p_image, 
 	_texture_set_data(p_texture, p_image, p_layer, false);
 }
 
+void TextureStorage::_texture_upload_array_slice_2d(Texture *p_texture, int p_layer, int p_mipmap, int p_width, int p_height, GLenum p_internal_format, GLenum p_format, GLenum p_type, int64_t p_size, const uint8_t *p_data, bool p_compressed) {
+	// GLES2 simplification: no array textures in ES 2.0; keep one plain 2D
+	// texture per layer instead (used by lightmaps). The array object itself
+	// stays an unbacked shell (nothing samples arrays on ES 2.0).
+	// NOTE: Vector::resize does not zero new POD elements, fill explicitly.
+	if ((int)p_texture->slice_texids.size() <= p_layer) {
+		int old_size = p_texture->slice_texids.size();
+		p_texture->slice_texids.resize(p_layer + 1);
+		for (int i = old_size; i <= p_layer; i++) {
+			p_texture->slice_texids.write[i] = 0;
+		}
+	}
+	if (p_texture->slice_texids[p_layer] == 0) {
+		GLuint slice = 0;
+		glGenTextures(1, &slice);
+		p_texture->slice_texids.write[p_layer] = slice;
+		GLES2::Utilities::get_singleton()->texture_allocated_data(slice, p_size, "Texture Array Slice");
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, slice);
+		// Match the lightmap sampling state (linear, clamp).
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	} else {
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, p_texture->slice_texids[p_layer]);
+	}
+	if (p_compressed) {
+		glCompressedTexImage2D(GL_TEXTURE_2D, p_mipmap, p_internal_format, p_width, p_height, 0, p_size, p_data);
+	} else {
+		glTexImage2D(GL_TEXTURE_2D, p_mipmap, p_internal_format, p_width, p_height, 0, p_format, p_type, p_data);
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 void TextureStorage::_texture_set_data(RID p_texture, const Ref<Image> &p_image, int p_layer, bool p_initialize) {
 	Texture *texture = texture_owner.get_or_null(p_texture);
 
@@ -2078,7 +2121,9 @@ void TextureStorage::_texture_set_data(RID p_texture, const Ref<Image> &p_image,
 		img->get_mipmap_offset_and_size(i, ofs, size);
 		if (compressed) {
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-			if (texture->target == GL_TEXTURE_2D_ARRAY) {
+			if (texture->target == GL_TEXTURE_2D_ARRAY && RasterizerUtilGLES2::is_gles2()) {
+				_texture_upload_array_slice_2d(texture, p_layer, i, w, h, internal_format, format, type, size, &read[ofs], true);
+			} else if (texture->target == GL_TEXTURE_2D_ARRAY) {
 				if (p_initialize) {
 					glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, i, internal_format, w, h, texture->layers, 0, size * texture->layers, nullptr);
 				}
@@ -2088,7 +2133,9 @@ void TextureStorage::_texture_set_data(RID p_texture, const Ref<Image> &p_image,
 			}
 		} else {
 			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-			if (texture->target == GL_TEXTURE_2D_ARRAY) {
+			if (texture->target == GL_TEXTURE_2D_ARRAY && RasterizerUtilGLES2::is_gles2()) {
+				_texture_upload_array_slice_2d(texture, p_layer, i, w, h, internal_format, format, type, size, &read[ofs], false);
+			} else if (texture->target == GL_TEXTURE_2D_ARRAY) {
 				if (p_initialize) {
 					glTexImage3D(GL_TEXTURE_2D_ARRAY, i, internal_format, w, h, texture->layers, 0, format, type, nullptr);
 				}
@@ -2263,6 +2310,15 @@ uint32_t TextureStorage::texture_get_texid(RID p_texture) const {
 	ERR_FAIL_NULL_V(texture, 0);
 
 	return texture->tex_id;
+}
+
+uint32_t TextureStorage::texture_2d_array_get_slice_texid(RID p_texture, int p_layer) const {
+	Texture *texture = texture_owner.get_or_null(p_texture);
+
+	ERR_FAIL_NULL_V(texture, 0);
+	ERR_FAIL_INDEX_V(p_layer, texture->slice_texids.size(), 0);
+
+	return texture->slice_texids[p_layer];
 }
 
 Vector3i TextureStorage::texture_get_size(RID p_texture) const {

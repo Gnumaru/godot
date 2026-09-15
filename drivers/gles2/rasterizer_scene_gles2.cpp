@@ -4070,11 +4070,11 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 							GLES2::LightmapInstance *li = GLES2::LightStorage::get_singleton()->get_lightmap_instance(inst->lightmap_instance);
 							GLES2::Lightmap *lm = GLES2::LightStorage::get_singleton()->get_lightmap(li->lightmap);
 
-							if (lm->uses_spherical_harmonics) {
+							if (lm->uses_spherical_harmonics && !RasterizerUtilGLES2::is_gles2()) {
 								spec_constants |= SceneShaderGLES2::USE_SH_LIGHTMAP;
 							}
 
-							if (lightmap_bicubic_upscale) {
+							if (lightmap_bicubic_upscale && !RasterizerUtilGLES2::is_gles2()) {
 								spec_constants |= SceneShaderGLES2::LIGHTMAP_BICUBIC_FILTER;
 							}
 						} else if (inst->lightmap_sh) {
@@ -4107,7 +4107,7 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 							spec_constants |= SceneShaderGLES2::USE_LIGHTMAP;
 							disable_lightmaps = false;
 
-							if (lightmap_bicubic_upscale) {
+							if (lightmap_bicubic_upscale && !RasterizerUtilGLES2::is_gles2()) {
 								spec_constants |= SceneShaderGLES2::LIGHTMAP_BICUBIC_FILTER;
 							}
 						}
@@ -4246,16 +4246,30 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 								material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::LIGHTMAP_TEXTURE_SIZE, light_texture_size, shader->version, instance_variant, spec_constants);
 							}
 
+						if (RasterizerUtilGLES2::is_gles2()) {
+							// GLES2 simplification: int uniforms (no uint in ES 2.0).
+							material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::LIGHTMAP_SHADOWMASK_MODE, int32_t(lm->shadowmask_mode), shader->version, instance_variant, spec_constants);
+						} else {
 							material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::LIGHTMAP_SHADOWMASK_MODE, (uint32_t)lm->shadowmask_mode, shader->version, instance_variant, spec_constants);
+						}
 
-							if (lm->shadow_texture.is_valid()) {
-								tex = GLES2::TextureStorage::get_singleton()->texture_get_texid(lm->shadow_texture);
+						if (lm->shadow_texture.is_valid()) {
+							if (RasterizerUtilGLES2::is_gles2()) {
+								// GLES2 simplification: single 2D slice (no array textures in ES 2.0).
+								tex = GLES2::TextureStorage::get_singleton()->texture_2d_array_get_slice_texid(lm->shadow_texture, inst->lightmap_slice_index);
 							} else {
-								tex = GLES2::TextureStorage::get_singleton()->texture_get_texid(GLES2::TextureStorage::get_singleton()->texture_gl_get_default(GLES2::DEFAULT_GL_TEXTURE_2D_ARRAY_WHITE));
+								tex = GLES2::TextureStorage::get_singleton()->texture_get_texid(lm->shadow_texture);
 							}
+						} else {
+							tex = GLES2::TextureStorage::get_singleton()->texture_get_texid(GLES2::TextureStorage::get_singleton()->texture_gl_get_default(GLES2::DEFAULT_GL_TEXTURE_2D_ARRAY_WHITE));
+						}
 
-							glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 5);
+						glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 5);
+						if (RasterizerUtilGLES2::is_gles2()) {
+							glBindTexture(GL_TEXTURE_2D, tex);
+						} else {
 							glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+						}
 						}
 					}
 				}
@@ -4296,9 +4310,21 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 						GLES2::LightmapInstance *li = GLES2::LightStorage::get_singleton()->get_lightmap_instance(inst->lightmap_instance);
 						GLES2::Lightmap *lm = GLES2::LightStorage::get_singleton()->get_lightmap(li->lightmap);
 
-						GLuint tex = GLES2::TextureStorage::get_singleton()->texture_get_texid(lm->light_texture);
+						GLuint tex = 0;
+						if (RasterizerUtilGLES2::is_gles2()) {
+							// GLES2 simplification: single 2D slice (no array textures
+							// in ES 2.0); SH bakes store l0 at slice*4.
+							int slice_2d = lm->uses_spherical_harmonics ? inst->lightmap_slice_index * 4 : inst->lightmap_slice_index;
+							tex = GLES2::TextureStorage::get_singleton()->texture_2d_array_get_slice_texid(lm->light_texture, slice_2d);
+						} else {
+							tex = GLES2::TextureStorage::get_singleton()->texture_get_texid(lm->light_texture);
+						}
 						glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 4);
-						glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+						if (RasterizerUtilGLES2::is_gles2()) {
+							glBindTexture(GL_TEXTURE_2D, tex);
+						} else {
+							glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
+						}
 
 						material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::LIGHTMAP_SLICE, inst->lightmap_slice_index, shader->version, instance_variant, spec_constants);
 
@@ -5096,15 +5122,12 @@ RasterizerSceneGLES2::RasterizerSceneGLES2() {
 		global_defines += "\n#define MAX_FORWARD_LIGHTS " + itos(config->max_lights_per_object) + "\n";
 		if (RasterizerUtilGLES2::is_gles2()) {
 			// GLES2 simplification: shadow maps need array/depth textures
-			// (unavailable in ES 2.0); omni/spot stay unshadowed for now.
+			// (unavailable in ES 2.0); omni/area stay unshadowed, the rest
+			// uses packed RGBA atlases (see scene.glsl).
 			global_defines += "\n#define SHADOWS_DISABLED\n";
-			// ... but directional and spot shadows use a packed RGBA atlas (no
-			// shadow samplers needed), so they stay enabled (see scene.glsl).
 			global_defines += "\n#define DIRECTIONAL_SHADOWS_GLES2\n";
 			global_defines += "\n#define SPOT_SHADOWS_GLES2\n";
 			global_defines += "\n#define OMNI_SHADOWS_GLES2\n";
-			// GLES2 simplification: lightmaps need array textures (same reason).
-			global_defines += "\n#define DISABLE_LIGHTMAP\n";
 		}
 		global_defines += "\n#define MAX_ROUGHNESS_LOD " + itos(sky_globals.roughness_layers - 1) + ".0\n";
 		if (config->force_vertex_shading) {

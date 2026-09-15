@@ -197,6 +197,9 @@ struct Texture {
 
 	bool active = false;
 	GLuint tex_id = 0;
+	// GLES2 simplification: plain 2D textures per array layer on ES 2.0 (no
+	// array textures there); populated at upload time, parallel to layers.
+	Vector<GLuint> slice_texids;
 
 	uint16_t stored_cube_sides = 0;
 
@@ -479,6 +482,7 @@ private:
 	Rect2i _render_target_get_sdf_rect(const RenderTarget *rt) const;
 
 	void _texture_set_data(RID p_texture, const Ref<Image> &p_image, int p_layer, bool p_initialize);
+	void _texture_upload_array_slice_2d(Texture *p_texture, int p_layer, int p_mipmap, int p_width, int p_height, GLenum p_internal_format, GLenum p_format, GLenum p_type, int64_t p_size, const uint8_t *p_data, bool p_compressed);
 	void _texture_set_3d_data(RID p_texture, const Vector<Ref<Image>> &p_data, bool p_initialize);
 	void _texture_set_swizzle(Texture *p_texture, Image::Format p_real_format);
 	Vector<Ref<Image>> _texture_3d_read_framebuffer(Texture *p_texture) const;
@@ -605,6 +609,8 @@ public:
 	void texture_set_data(RID p_texture, const Ref<Image> &p_image, int p_layer = 0);
 	virtual Image::Format texture_get_format(RID p_texture) const override;
 	uint32_t texture_get_texid(RID p_texture) const;
+	// GLES2 simplification: 2D texture for one array layer on ES 2.0 (0 if unavailable).
+	uint32_t texture_2d_array_get_slice_texid(RID p_texture, int p_layer) const;
 	Vector3i texture_get_size(RID p_texture) const;
 	uint32_t texture_get_width(RID p_texture) const;
 	uint32_t texture_get_height(RID p_texture) const;
