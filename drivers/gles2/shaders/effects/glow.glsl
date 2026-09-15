@@ -110,4 +110,9 @@ void main() {
 
 	frag_color = color / 12.0;
 #endif // MODE_UPSAMPLE
+
+#ifdef USE_GLES2_ES2
+	// Single ES2 render target (frag_color is a plain global there).
+	gl_FragColor = frag_color;
+#endif
 }

@@ -196,4 +196,9 @@ void main() {
 #endif
 
 	frag_color = color;
+
+#ifdef USE_GLES2_ES2
+	// Single ES2 render target (frag_color is a plain global there).
+	gl_FragColor = frag_color;
+#endif
 }

@@ -3507,22 +3507,27 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 			bcs_spec_constants |= PostShaderGLES2::USE_BCS;
 
 			if (color_correction_texture.is_valid()) {
-				bcs_spec_constants |= PostShaderGLES2::USE_COLOR_CORRECTION;
-
 				bool use_1d_lut = environment_get_use_1d_color_correction(p_render_data->environment);
-				GLenum texture_target = GL_TEXTURE_3D;
-				if (use_1d_lut) {
-					bcs_spec_constants |= PostShaderGLES2::USE_1D_LUT;
-					texture_target = GL_TEXTURE_2D;
-				}
+				// GLES2 simplification: no 3D textures in ES 2.0 (only 1D LUTs).
+				if (RasterizerUtilGLES2::is_gles2() && !use_1d_lut) {
+					WARN_PRINT_ONCE("3D color correction LUTs are not supported in the GLES2 (Compatibility) renderer; ignoring.");
+				} else {
+					bcs_spec_constants |= PostShaderGLES2::USE_COLOR_CORRECTION;
 
-				glActiveTexture(GL_TEXTURE2);
-				glBindTexture(texture_target, texture_storage->texture_get_texid(color_correction_texture));
-				glTexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-				glTexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-				glTexParameteri(texture_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-				glTexParameteri(texture_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-				glTexParameteri(texture_target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+					GLenum texture_target = GL_TEXTURE_3D;
+					if (use_1d_lut) {
+						bcs_spec_constants |= PostShaderGLES2::USE_1D_LUT;
+						texture_target = GL_TEXTURE_2D;
+					}
+
+					glActiveTexture(GL_TEXTURE2);
+					glBindTexture(texture_target, texture_storage->texture_get_texid(color_correction_texture));
+					glTexParameteri(texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+					glTexParameteri(texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+					glTexParameteri(texture_target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+					glTexParameteri(texture_target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+					glTexParameteri(texture_target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+				}
 			}
 		}
 	}
@@ -3565,11 +3570,29 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 				glow->process_glow(color, internal_size, glow_buffers);
 			}
 
-			// Copy color buffer
-			post_effects->post_copy(fbo_rt, target_size, color,
-					depth_buffer, ssao_enabled, ssao_quality, ssao_strength, ssao_radius,
-					internal_size, p_render_data->luminance_multiplier, glow_buffers, glow_intensity,
-					srgb_white, 0, false, bcs_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST);
+		// Copy color buffer
+		// GLES2 simplification: tonemap/BCS data is plain uniforms here (no UBO),
+		// gather it for PostEffects::post_copy.
+		float post_exposure = 1.0;
+		int32_t post_tonemapper = 0; // TONEMAPPER_LINEAR.
+		Vector4 post_tonemapper_params;
+		float post_brightness = 1.0;
+		float post_contrast = 1.0;
+		float post_saturation = 1.0;
+		if (p_render_data->environment.is_valid()) {
+			post_exposure = environment_get_exposure(p_render_data->environment);
+			post_tonemapper = int32_t(environment_get_tone_mapper(p_render_data->environment));
+			RendererEnvironmentStorage::TonemapParameters post_params = environment_get_tonemap_parameters(p_render_data->environment, false, 1.0f);
+			post_tonemapper_params = Vector4(post_params.tonemapper_params[0], post_params.tonemapper_params[1], post_params.tonemapper_params[2], post_params.tonemapper_params[3]);
+			post_brightness = environment_get_adjustments_brightness(p_render_data->environment);
+			post_contrast = environment_get_adjustments_contrast(p_render_data->environment);
+			post_saturation = environment_get_adjustments_saturation(p_render_data->environment);
+		}
+		post_effects->post_copy(fbo_rt, target_size, color,
+				depth_buffer, ssao_enabled, ssao_quality, ssao_strength, ssao_radius,
+				internal_size, p_render_data->luminance_multiplier, glow_buffers, glow_intensity,
+				srgb_white, 0, false, bcs_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST,
+				post_exposure, post_tonemapper, post_tonemapper_params, post_brightness, post_contrast, post_saturation);
 
 			// Copy depth buffer
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_int);

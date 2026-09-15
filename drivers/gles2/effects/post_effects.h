@@ -61,7 +61,9 @@ public:
 	void post_copy(GLuint p_dest_framebuffer, Size2i p_dest_size, GLuint p_source_color,
 			GLuint p_source_depth, bool p_ssao_enabled, int p_ssao_quality_level, float p_ssao_strength, float p_ssao_radius,
 			Size2i p_source_size, float p_luminance_multiplier, const Glow::Level *p_glow_buffers, float p_glow_intensity,
-			float p_srgb_white, uint32_t p_view = 0, bool p_use_multiview = false, uint64_t p_spec_constants = 0, bool p_bilinear_filtering = true);
+			float p_srgb_white, uint32_t p_view = 0, bool p_use_multiview = false, uint64_t p_spec_constants = 0, bool p_bilinear_filtering = true,
+			float p_exposure = 1.0, int32_t p_tonemapper = 0, const Vector4 &p_tonemapper_params = Vector4(),
+			float p_brightness = 1.0, float p_contrast = 1.0, float p_saturation = 1.0);
 };
 
 } //namespace GLES2
