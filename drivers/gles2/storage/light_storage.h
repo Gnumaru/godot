@@ -292,6 +292,11 @@ private:
 	struct DirectionalShadow {
 		GLuint depth = 0;
 		GLuint fbo = 0;
+		// GLES2 simplification: ES 2.0 has no depth textures or shadow
+		// samplers, so the atlas is packed RGBA8 depth instead (depth holds
+		// the color texture there); depth_rb is the depth renderbuffer used
+		// while rendering into it.
+		GLuint depth_rb = 0;
 
 		int light_count = 0;
 		int size = 0;

@@ -1326,9 +1326,13 @@ uniform DirectionalLightData directional_lights[MAX_DIRECTIONAL_LIGHT_DATA_STRUC
 
 #if defined(USE_ADDITIVE_LIGHTING) && (!defined(ADDITIVE_OMNI) && !defined(ADDITIVE_SPOT))
 // Directional shadows can be in the base pass or in the additive passes
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(DIRECTIONAL_SHADOWS_GLES2)
+#ifdef USE_GLES2_ES2
+uniform highp sampler2D directional_shadow_atlas; // texunit:-3
+#else
 uniform highp sampler2DShadow directional_shadow_atlas; // texunit:-3
-#endif // SHADOWS_DISABLED
+#endif
+#endif // !SHADOWS_DISABLED || DIRECTIONAL_SHADOWS_GLES2
 #endif // defined(USE_ADDITIVE_LIGHTING) && (!defined(ADDITIVE_OMNI) && !defined(ADDITIVE_SPOT))
 
 #endif // !DISABLE_LIGHT_DIRECTIONAL || USE_SUN_SCATTER
@@ -1446,7 +1450,57 @@ uniform lowp int directional_shadow_index;
 #endif // !(defined(ADDITIVE_OMNI) || defined(ADDITIVE_SPOT))
 
 #if !defined(ADDITIVE_OMNI)
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(DIRECTIONAL_SHADOWS_GLES2)
+#ifdef USE_GLES2_ES2
+// Packed RGBA depth (Godot 3 style); ES 2.0 has no depth textures or shadow samplers.
+float unpack_shadow_depth(vec4 p_packed) {
+	return dot(p_packed, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0));
+}
+float sample_shadow_tap(highp sampler2D p_atlas, vec2 p_uv, float p_z) {
+	// Reversed-Z (GREATER): lit when the receiver is nearer-or-equal than stored.
+	return (p_z >= unpack_shadow_depth(texture2D(p_atlas, p_uv)) - 0.0001) ? 1.0 : 0.0;
+}
+float sample_shadow(highp sampler2D p_atlas, float p_pixel_size, vec4 p_pos) {
+	vec3 proj = p_pos.xyz / p_pos.w;
+	float avg = sample_shadow_tap(p_atlas, proj.xy, proj.z);
+#ifdef SHADOW_MODE_PCF_13
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(p_pixel_size * 2.0, 0.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(-p_pixel_size * 2.0, 0.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(0.0, p_pixel_size * 2.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(0.0, -p_pixel_size * 2.0), proj.z);
+
+	// Early bail if distant samples are fully shaded (or none are shaded) to improve performance.
+	if (avg <= 0.000001) {
+		// None shaded at all.
+		return 0.0;
+	} else if (avg >= 4.999999) {
+		// All fully shaded.
+		return 1.0;
+	}
+
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(p_pixel_size, 0.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(-p_pixel_size, 0.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(0.0, p_pixel_size), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(0.0, -p_pixel_size), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(p_pixel_size, p_pixel_size), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(-p_pixel_size, p_pixel_size), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(p_pixel_size, -p_pixel_size), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(-p_pixel_size, -p_pixel_size), proj.z);
+	return avg * (1.0 / 13.0);
+#endif
+
+#ifdef SHADOW_MODE_PCF_5
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(p_pixel_size, 0.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(-p_pixel_size, 0.0), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(0.0, p_pixel_size), proj.z);
+	avg += sample_shadow_tap(p_atlas, proj.xy + vec2(0.0, -p_pixel_size), proj.z);
+	return avg * (1.0 / 5.0);
+
+#endif
+
+	return avg;
+}
+#else // !USE_GLES2_ES2
 float sample_shadow(highp sampler2DShadow shadow, float shadow_pixel_size, vec4 pos) {
 	// Use textureProjLod with LOD set to 0.0 over textureProj, as textureProj not working correctly on ANGLE with Metal backend.
 	// https://github.com/godotengine/godot/issues/93537
@@ -1490,11 +1544,23 @@ float sample_shadow(highp sampler2DShadow shadow, float shadow_pixel_size, vec4 
 
 	return avg;
 }
-#endif // !SHADOWS_DISABLED
+#endif // !USE_GLES2_ES2
+#endif // !SHADOWS_DISABLED || DIRECTIONAL_SHADOWS_GLES2
 #endif //!defined(ADDITIVE_OMNI)
 #endif // USE_ADDITIVE_LIGHTING
 
 #endif // !MODE_RENDER_DEPTH
+
+#if defined(RENDER_SHADOWS) && defined(USE_GLES2_ES2)
+// Packed depth write for the ES 2.0 directional shadow atlas (used by the
+// RENDER_SHADOWS hook at the end of main); declared here, outside the
+// additive-lighting region above, so shadow-write variants see it too.
+vec4 pack_shadow_depth(float p_depth) {
+	vec4 comp = fract(p_depth * vec4(1.0, 255.0, 65025.0, 16581375.0));
+	comp -= comp.yzww * vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
+	return comp;
+}
+#endif
 
 #ifndef DISABLE_LIGHTMAP
 #ifdef USE_LIGHTMAP
@@ -2890,7 +2956,7 @@ void main() {
 
 #if !defined(ADDITIVE_OMNI) && !defined(ADDITIVE_SPOT)
 
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(DIRECTIONAL_SHADOWS_GLES2)
 // Baked shadowmasks
 #ifdef USE_LIGHTMAP
 	float shadowmask = 1.0f;
@@ -3035,7 +3101,7 @@ void main() {
 
 #else
 	float directional_shadow = 1.0f;
-#endif // SHADOWS_DISABLED
+#endif // !SHADOWS_DISABLED || DIRECTIONAL_SHADOWS_GLES2
 
 #ifndef USE_VERTEX_LIGHTING
 	if (MASK_OVERLAP(directional_lights[directional_shadow_index].mask, layer_mask)) {
@@ -3171,6 +3237,10 @@ void main() {
 
 #ifdef USE_GLES2_ES2
 	// Single ES2 render target (frag_color is a plain global there).
+#if defined(RENDER_SHADOWS)
+	// Packed depth write for the ES 2.0 directional shadow atlas.
+	frag_color = pack_shadow_depth(gl_FragCoord.z);
+#endif
 	gl_FragColor = frag_color;
 #endif
 }
