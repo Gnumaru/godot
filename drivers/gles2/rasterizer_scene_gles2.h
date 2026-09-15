@@ -787,6 +787,8 @@ private:
 		DirectionalLightData *directional_lights = nullptr;
 		DirectionalShadowData *directional_shadows = nullptr;
 		RSE::ShadowQuality directional_shadow_quality = RSE::ShadowQuality::SHADOW_QUALITY_SOFT_LOW;
+		// Dual paraboloid omni writes: hemisphere side (+1 back, -1 front), set per pass.
+		float paraboloid_side = 1.0f;
 	} scene_state;
 
 	struct RenderListParameters {

@@ -1330,6 +1330,12 @@ RID LightStorage::shadow_atlas_create() {
 	return shadow_atlas_owner.make_rid(ShadowAtlas());
 }
 
+bool LightStorage::light_instances_can_render_shadow_cube() const {
+	// GLES2 simplification: cube shadow maps need shadow samplers (unavailable
+	// in ES 2.0); the server then sends dual-paraboloid passes instead.
+	return !RasterizerUtilGLES2::is_gles2();
+}
+
 void LightStorage::shadow_atlas_free(RID p_atlas) {
 	shadow_atlas_set_size(p_atlas, 0);
 	shadow_atlas_owner.free(p_atlas);
@@ -1591,8 +1597,8 @@ bool LightStorage::_shadow_atlas_find_shadow(ShadowAtlas *shadow_atlas, int *p_i
 			GLenum format = shadow_atlas->use_16_bits ? GL_DEPTH_COMPONENT16 : GL_DEPTH_COMPONENT24;
 			GLenum type = shadow_atlas->use_16_bits ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
 
-			if (is_omni) {
-				glBindTexture(GL_TEXTURE_CUBE_MAP, texture_id);
+		if (is_omni && !RasterizerUtilGLES2::is_gles2()) {
+			glBindTexture(GL_TEXTURE_CUBE_MAP, texture_id);
 				for (int id = 0; id < 6; id++) {
 					glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + id, 0, format, size / 2, size / 2, 0, GL_DEPTH_COMPONENT, type, nullptr);
 				}

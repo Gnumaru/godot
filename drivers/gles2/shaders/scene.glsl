@@ -24,6 +24,7 @@ USE_LIGHTMAP_CAPTURE = false
 USE_MULTIVIEW = false
 RENDER_SHADOWS = false
 RENDER_SHADOWS_LINEAR = false
+RENDER_SHADOWS_PARABOLOID = false
 SHADOW_MODE_PCF_5 = false
 SHADOW_MODE_PCF_13 = false
 LIGHT_USE_PSSM2 = false
@@ -301,6 +302,11 @@ uniform lowp int directional_shadow_index;
 #endif // !(defined(ADDITIVE_OMNI) || defined(ADDITIVE_SPOT)
 #endif // USE_ADDITIVE_LIGHTING
 
+#if defined(RENDER_SHADOWS_PARABOLOID) && defined(USE_GLES2_ES2)
+// Dual paraboloid omni writes: hemisphere side (+1 back, -1 front), set per pass.
+uniform highp float paraboloid_side;
+#endif
+
 #ifdef USE_VERTEX_LIGHTING
 
 out vec3 diffuse_light_interp;
@@ -563,6 +569,13 @@ out highp vec4 shadow_coord4;
 #endif // LIGHT_USE_PSSM4
 #endif // USE_ADDITIVE_LIGHTING
 #endif // RENDER_MOTION_VECTORS
+
+#if defined(RENDER_SHADOWS_PARABOLOID) && defined(USE_GLES2_ES2)
+// Dual paraboloid hemisphere flag (see the write branch in vertex_shader
+// and the discard in main); vertex clipping alone smears triangles
+// straddling the equator.
+out highp float dp_clip;
+#endif
 
 // GLES2 simplification (low-end 3D): material uniforms as plain variables (no UBO).
 // The #MATERIAL_UNIFORMS string already carries "uniform " per declaration
@@ -862,6 +875,23 @@ void vertex_shader(vec4 vertex_angle_attrib_input,
 	clip_position_output = projection_matrix * vec4(vertex_interp, 1.0);
 #endif
 
+#if defined(RENDER_SHADOWS) && defined(RENDER_SHADOWS_PARABOLOID) && defined(USE_GLES2_ES2)
+	// Dual paraboloid write (cube maps need shadow samplers, unavailable in
+	// ES 2.0). vertex_interp is in light-view space here; halves share one
+	// texture, split by the per-pass viewport below (back bottom, front top).
+	// Wrong-hemisphere fragments are discarded in main (vertex clipping alone
+	// would smear triangles straddling the equator).
+	vec3 paraboloid_vec = vertex_interp;
+	float paraboloid_dist = length(paraboloid_vec);
+	vec3 paraboloid_dir = paraboloid_vec / max(paraboloid_dist, 0.0001);
+	paraboloid_dir.z *= paraboloid_side;
+	dp_clip = paraboloid_dir.z;
+	vec2 paraboloid_uv = paraboloid_dir.xy / (1.0 - paraboloid_dir.z);
+	// Reversed-Z window depth (GREATER): near=1, far=0.
+	float paraboloid_depth = 1.0 - paraboloid_dist / scene_data_block.data.z_far;
+	clip_position_output = vec4(paraboloid_uv, paraboloid_depth * 2.0 - 1.0, 1.0);
+#endif
+
 #if !defined(RENDER_SHADOWS) && !defined(RENDER_SHADOWS_LINEAR)
 #ifdef Z_CLIP_SCALE_USED
 	clip_position_output.z = mix(clip_position_output.w, clip_position_output.z, z_clip_scale);
@@ -1153,6 +1183,10 @@ in highp vec4 shadow_coord4;
 #endif //LIGHT_USE_PSSM4
 #endif
 
+#if defined(RENDER_SHADOWS_PARABOLOID) && defined(USE_GLES2_ES2)
+in highp float dp_clip;
+#endif
+
 #ifdef USE_RADIANCE_MAP
 
 #define RADIANCE_MAX_LOD 5.0
@@ -1403,9 +1437,13 @@ uniform int area_light_count;
 
 #ifdef USE_ADDITIVE_LIGHTING
 #ifdef ADDITIVE_OMNI
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(OMNI_SHADOWS_GLES2)
+#ifdef USE_GLES2_ES2
+uniform highp sampler2D omni_shadow_texture; // texunit:-3
+#else
 uniform highp samplerCubeShadow omni_shadow_texture; // texunit:-3
 #endif
+#endif // !SHADOWS_DISABLED || OMNI_SHADOWS_GLES2
 uniform lowp int omni_light_index;
 #endif
 #ifdef ADDITIVE_SPOT
@@ -1453,10 +1491,9 @@ uniform DirectionalShadowData directional_shadows[MAX_DIRECTIONAL_LIGHT_DATA_STR
 uniform lowp int directional_shadow_index;
 #endif // !(defined(ADDITIVE_OMNI) || defined(ADDITIVE_SPOT))
 
-#if !defined(ADDITIVE_OMNI)
-#if !defined(SHADOWS_DISABLED) || defined(DIRECTIONAL_SHADOWS_GLES2)
-#ifdef USE_GLES2_ES2
-// Packed RGBA depth (Godot 3 style); ES 2.0 has no depth textures or shadow samplers.
+#if (!defined(SHADOWS_DISABLED) || defined(DIRECTIONAL_SHADOWS_GLES2) || defined(SPOT_SHADOWS_GLES2) || defined(OMNI_SHADOWS_GLES2)) && defined(USE_GLES2_ES2)
+// Packed RGBA depth helpers (Godot 3 style); shared by the directional, spot
+// and omni samplers below. ES 2.0 has no depth textures or shadow samplers.
 float unpack_shadow_depth(vec4 p_packed) {
 	return dot(p_packed, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0));
 }
@@ -1464,6 +1501,11 @@ float sample_shadow_tap(highp sampler2D p_atlas, vec2 p_uv, float p_z) {
 	// Reversed-Z (GREATER): lit when the receiver is nearer-or-equal than stored.
 	return (p_z >= unpack_shadow_depth(texture2D(p_atlas, p_uv)) - 0.0001) ? 1.0 : 0.0;
 }
+#endif
+
+#if !defined(ADDITIVE_OMNI)
+#if !defined(SHADOWS_DISABLED) || defined(DIRECTIONAL_SHADOWS_GLES2) || defined(SPOT_SHADOWS_GLES2)
+#ifdef USE_GLES2_ES2
 float sample_shadow(highp sampler2D p_atlas, float p_pixel_size, vec4 p_pos) {
 	vec3 proj = p_pos.xyz / p_pos.w;
 	float avg = sample_shadow_tap(p_atlas, proj.xy, proj.z);
@@ -1549,7 +1591,7 @@ float sample_shadow(highp sampler2DShadow shadow, float shadow_pixel_size, vec4 
 	return avg;
 }
 #endif // !USE_GLES2_ES2
-#endif // !SHADOWS_DISABLED || DIRECTIONAL_SHADOWS_GLES2
+#endif // !SHADOWS_DISABLED || DIRECTIONAL_SHADOWS_GLES2 || SPOT_SHADOWS_GLES2
 #endif //!defined(ADDITIVE_OMNI)
 #endif // USE_ADDITIVE_LIGHTING
 
@@ -2318,6 +2360,13 @@ vec4 textureArray_bicubic(sampler2DArray tex, vec3 uv, vec2 texture_size) {
 #endif // RENDER_MOTION_VECTORS
 
 void main() {
+#if defined(RENDER_SHADOWS) && defined(RENDER_SHADOWS_PARABOLOID) && defined(USE_GLES2_ES2)
+	// Dual paraboloid write: exact hemisphere cut (see dp_clip in the vertex
+	// branch above).
+	if (dp_clip > 0.0) {
+		discard;
+	}
+#endif
 #ifndef RENDER_MOTION_VECTORS
 	//lay out everything, whatever is unused is optimized away anyway
 	vec3 vertex = vertex_interp;
@@ -3137,11 +3186,26 @@ void main() {
 
 #ifdef ADDITIVE_OMNI
 	float omni_shadow = 1.0f;
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(OMNI_SHADOWS_GLES2)
+#ifdef USE_GLES2_ES2
+	// Dual paraboloid (Godot 3 style): hemispheres share one texture, back on
+	// the bottom half, front on the top half. Reversed-Z depth as elsewhere.
+	vec3 omni_ray = ((positional_shadows[positional_shadow_index].shadow_matrix * vec4(shadow_coord.xyz, 1.0))).xyz;
+	float omni_len = length(omni_ray);
+	vec3 omni_dir = omni_ray / max(omni_len, 0.0001);
+	float omni_depth = 1.0 - omni_len * omni_lights[omni_light_index].inv_radius;
+	vec2 omni_uv = omni_dir.xy / (1.0 + abs(omni_dir.z));
+	// Halves share one texture full-width: back on the bottom half, front on
+	// the top half (matches the per-pass viewports on the write side).
+	omni_uv = omni_uv * vec2(0.5, 0.25) + vec2(0.5, (omni_dir.z >= 0.0 ? 0.75 : 0.25));
+	omni_shadow = sample_shadow_tap(omni_shadow_texture, omni_uv, omni_depth);
+	omni_shadow = mix(1.0, omni_shadow, omni_lights[omni_light_index].shadow_opacity);
+#else
 	vec3 light_ray = ((positional_shadows[positional_shadow_index].shadow_matrix * vec4(shadow_coord.xyz, 1.0))).xyz;
 	omni_shadow = texture(omni_shadow_texture, vec4(light_ray, 1.0 - length(light_ray) * omni_lights[omni_light_index].inv_radius));
 	omni_shadow = mix(1.0, omni_shadow, omni_lights[omni_light_index].shadow_opacity);
-#endif // SHADOWS_DISABLED
+#endif
+#endif // !SHADOWS_DISABLED || OMNI_SHADOWS_GLES2
 
 #ifndef USE_VERTEX_LIGHTING
 	light_process_omni(omni_light_index, vertex, view, normal, f0, roughness, metallic, omni_shadow, albedo, alpha, screen_uv,

@@ -2553,11 +2553,12 @@ void RasterizerSceneGLES2::_render_shadows_es2(const RenderDataGLES2 *p_render_d
 
 	LocalVector<int> directional_shadows;
 	LocalVector<int> spot_shadows;
+	LocalVector<int> omni_shadows;
 
 	float lod_distance_multiplier = p_render_data->cam_projection.get_lod_multiplier();
 
-	// Directional and spot lights only; omni/area need shadow samplers
-	// (unavailable in ES 2.0).
+	// Directional, spot and omni lights; area lights need shadow samplers
+	// (unavailable in ES 2.0). Omni uses dual paraboloid (see below).
 	for (int i = 0; i < p_render_data->render_shadow_count; i++) {
 		RID li = p_render_data->render_shadows[i].light;
 		RID base = light_storage->light_instance_get_base_light(li);
@@ -2566,13 +2567,15 @@ void RasterizerSceneGLES2::_render_shadows_es2(const RenderDataGLES2 *p_render_d
 			directional_shadows.push_back(i);
 		} else if (light_storage->light_get_type(base) == RSE::LIGHT_SPOT) {
 			spot_shadows.push_back(i);
+		} else if (light_storage->light_get_type(base) == RSE::LIGHT_OMNI) {
+			omni_shadows.push_back(i);
 		}
 	}
 	if (directional_shadows.size()) {
 		light_storage->update_directional_shadow_atlas();
 	}
 
-	if (directional_shadows.size() || spot_shadows.size()) {
+	if (directional_shadows.size() || spot_shadows.size() || omni_shadows.size()) {
 		RENDER_TIMESTAMP("Render Shadows");
 
 		for (uint32_t i = 0; i < directional_shadows.size(); i++) {
@@ -2580,6 +2583,9 @@ void RasterizerSceneGLES2::_render_shadows_es2(const RenderDataGLES2 *p_render_d
 		}
 		for (uint32_t i = 0; i < spot_shadows.size(); i++) {
 			_render_shadow_pass(p_render_data->render_shadows[spot_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[spot_shadows[i]].pass, p_render_data->render_shadows[spot_shadows[i]].instances, lod_distance_multiplier, p_render_data->screen_mesh_lod_threshold, p_render_data->render_info, p_viewport_size, p_render_data->cam_transform);
+		}
+		for (uint32_t i = 0; i < omni_shadows.size(); i++) {
+			_render_shadow_pass(p_render_data->render_shadows[omni_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[omni_shadows[i]].pass, p_render_data->render_shadows[omni_shadows[i]].instances, lod_distance_multiplier, p_render_data->screen_mesh_lod_threshold, p_render_data->render_info, p_viewport_size, p_render_data->cam_transform);
 		}
 	}
 }
@@ -2719,7 +2725,7 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 		reverse_cull = !light_storage->light_get_reverse_cull_face_mode(base);
 
 		if (light_storage->light_get_type(base) == RSE::LIGHT_OMNI) {
-			if (light_storage->light_omni_get_shadow_mode(base) == RSE::LIGHT_OMNI_SHADOW_CUBE) {
+			if (light_storage->light_omni_get_shadow_mode(base) == RSE::LIGHT_OMNI_SHADOW_CUBE && !RasterizerUtilGLES2::is_gles2()) {
 				GLuint shadow_texture = light_storage->shadow_atlas_get_quadrant_shadow_texture(p_shadow_atlas, quadrant, shadow);
 				glBindFramebuffer(GL_FRAMEBUFFER, shadow_fb);
 
@@ -2739,6 +2745,20 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 				light_projection = light_storage->light_instance_get_shadow_camera(p_light, p_pass);
 				light_transform = light_storage->light_instance_get_shadow_transform(p_light, p_pass);
 				shadow_size = shadow_size / 2;
+			} else if (RasterizerUtilGLES2::is_gles2()) {
+				// Dual paraboloid on ES 2.0 (cube maps need shadow samplers).
+				// The server sends 2 hemisphere-culled passes (see
+				// light_instances_can_render_shadow_cube); halves share one
+				// 2D texture, stacked vertically (pass 0 back/bottom).
+				light_projection = light_storage->light_instance_get_shadow_camera(p_light, p_pass);
+				light_transform = light_storage->light_instance_get_shadow_transform(p_light, p_pass);
+
+				zfar = light_storage->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
+
+				if (p_pass == 1) {
+					// The side flip below mirrors winding: flip cull face.
+					reverse_cull = !reverse_cull;
+				}
 			} else {
 				ERR_FAIL_MSG("Dual paraboloid shadow mode not supported in the Compatibility renderer. Please use CubeMap shadow mode instead.");
 			}
@@ -2755,10 +2775,19 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 			// Prebake range into bias so we can scale based on distance easily.
 			shadow_bias *= light_storage->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
 		}
-		atlas_rect.size.x = shadow_size;
-		atlas_rect.size.y = shadow_size;
+	atlas_rect.size.x = shadow_size;
+	atlas_rect.size.y = shadow_size;
 
-		needs_clear = true;
+	if (light_storage->light_get_type(base) == RSE::LIGHT_OMNI && RasterizerUtilGLES2::is_gles2()) {
+		// Dual paraboloid halves stacked vertically (pass 0 back/bottom).
+		atlas_rect.size.y /= 2;
+		if (p_pass == 1) {
+			atlas_rect.position.y += atlas_rect.size.y;
+		}
+		scene_state.paraboloid_side = (p_pass == 0) ? 1.0f : -1.0f;
+	}
+
+	needs_clear = true;
 	}
 
 	RenderDataGLES2 render_data;
@@ -2806,9 +2835,13 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 	RasterizerUtilGLES2::clear_depth(0.0);
 	if (needs_clear) {
 		if (RasterizerUtilGLES2::is_gles2()) {
-			// Packed far depth is zero (reversed-Z clear); clear color too.
+			// Packed far depth is zero (reversed-Z clear); clear color too,
+			// scissored to the atlas rect (omni halves share one texture).
 			glClearColor(0.0, 0.0, 0.0, 0.0);
+			glEnable(GL_SCISSOR_TEST);
+			glScissor(atlas_rect.position.x, atlas_rect.position.y, atlas_rect.size.x, atlas_rect.size.y);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			glDisable(GL_SCISSOR_TEST);
 		} else {
 			glClear(GL_DEPTH_BUFFER_BIT);
 		}
@@ -2823,7 +2856,11 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 			SceneShaderGLES2::RENDER_SHADOWS;
 
 	if (light_storage->light_get_type(base) == RSE::LIGHT_OMNI) {
-		spec_constant_base_flags |= SceneShaderGLES2::RENDER_SHADOWS_LINEAR;
+		if (RasterizerUtilGLES2::is_gles2()) {
+			spec_constant_base_flags |= SceneShaderGLES2::RENDER_SHADOWS_PARABOLOID;
+		} else {
+			spec_constant_base_flags |= SceneShaderGLES2::RENDER_SHADOWS_LINEAR;
+		}
 	}
 
 	RenderListParameters render_list_params(render_list[RENDER_LIST_SECONDARY_GLES2].elements.ptr(), render_list[RENDER_LIST_SECONDARY_GLES2].elements.size(), reverse_cull, spec_constant_base_flags, false);
@@ -4143,8 +4180,13 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 					opaque_prepass_threshold = 0.1;
 				}
 
-				material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::OPAQUE_PREPASS_THRESHOLD, opaque_prepass_threshold, shader->version, instance_variant, spec_constants);
+			material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::OPAQUE_PREPASS_THRESHOLD, opaque_prepass_threshold, shader->version, instance_variant, spec_constants);
+			if constexpr (p_pass_mode == PASS_MODE_SHADOW_GLES2) {
+				if ((spec_constants & SceneShaderGLES2::RENDER_SHADOWS_PARABOLOID) != 0) {
+					material_storage->shaders.scene_shader.version_set_uniform(SceneShaderGLES2::PARABOLOID_SIDE, scene_state.paraboloid_side, shader->version, instance_variant, spec_constants);
+				}
 			}
+		}
 
 			// GLES2 simplification: 3D state as plain uniforms (no UBOs).
 			_set_scene_state_uniforms();
@@ -4173,12 +4215,13 @@ void RasterizerSceneGLES2::_render_list_template(RenderListParameters *p_params,
 							glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 3);
 							RID light_instance_rid = inst->light_passes[pass].light_instance_rid;
 
-							GLuint tex = GLES2::LightStorage::get_singleton()->light_instance_get_shadow_texture(light_instance_rid, p_render_data->shadow_atlas);
-							if (is_omni) {
-								glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
-							} else {
-								glBindTexture(GL_TEXTURE_2D, tex);
-							}
+						GLuint tex = GLES2::LightStorage::get_singleton()->light_instance_get_shadow_texture(light_instance_rid, p_render_data->shadow_atlas);
+						if (is_omni && !RasterizerUtilGLES2::is_gles2()) {
+							glBindTexture(GL_TEXTURE_CUBE_MAP, tex);
+						} else {
+							// ES 2.0 omni shadows are dual paraboloid 2D (no cube samplers).
+							glBindTexture(GL_TEXTURE_2D, tex);
+						}
 						}
 					} else {
 						uint32_t shadow_id = MAX_DIRECTIONAL_LIGHTS - 1 - (pass - int32_t(inst->light_passes.size()));
@@ -5059,6 +5102,7 @@ RasterizerSceneGLES2::RasterizerSceneGLES2() {
 			// shadow samplers needed), so they stay enabled (see scene.glsl).
 			global_defines += "\n#define DIRECTIONAL_SHADOWS_GLES2\n";
 			global_defines += "\n#define SPOT_SHADOWS_GLES2\n";
+			global_defines += "\n#define OMNI_SHADOWS_GLES2\n";
 			// GLES2 simplification: lightmaps need array textures (same reason).
 			global_defines += "\n#define DISABLE_LIGHTMAP\n";
 		}
