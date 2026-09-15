@@ -2967,6 +2967,21 @@ void RasterizerSceneGLES2::render_scene(const Ref<RenderSceneBuffers> &p_render_
 		render_data.render_info = r_render_info;
 		render_data.render_shadows = p_render_shadows;
 		render_data.render_shadow_count = p_render_shadow_count;
+
+		// GLES2 simplification (low-end 3D): these have no ES 2.0 path
+		// (need compute/array/3D textures); ignore gracefully, warn once.
+		if (p_voxel_gi_instances.size() > 0) {
+			WARN_PRINT_ONCE("VoxelGI is not supported in the GLES2 (Compatibility) renderer; ignoring.");
+		}
+		if (p_decals.size() > 0) {
+			WARN_PRINT_ONCE("Decals are not supported in the GLES2 (Compatibility) renderer; ignoring.");
+		}
+		if (p_fog_volumes.size() > 0) {
+			WARN_PRINT_ONCE("Volumetric fog volumes are not supported in the GLES2 (Compatibility) renderer; ignoring.");
+		}
+		if (p_render_sdfgi_region_count > 0) {
+			WARN_PRINT_ONCE("SDFGI is not supported in the GLES2 (Compatibility) renderer; ignoring.");
+		}
 	}
 
 	PagedArray<RID> empty;
