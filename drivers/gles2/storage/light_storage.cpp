@@ -1350,9 +1350,13 @@ void LightStorage::shadow_atlas_set_size(RID p_atlas, int p_size, bool p_16_bits
 		for (uint32_t j = 0; j < shadow_atlas->quadrants[i].textures.size(); j++) {
 			glDeleteTextures(1, &shadow_atlas->quadrants[i].textures[j]);
 			glDeleteFramebuffers(1, &shadow_atlas->quadrants[i].fbos[j]);
+			if (j < shadow_atlas->quadrants[i].depth_rbs.size() && shadow_atlas->quadrants[i].depth_rbs[j] != 0) {
+				glDeleteRenderbuffers(1, &shadow_atlas->quadrants[i].depth_rbs[j]);
+			}
 		}
 		shadow_atlas->quadrants[i].textures.clear();
 		shadow_atlas->quadrants[i].fbos.clear();
+		shadow_atlas->quadrants[i].depth_rbs.clear();
 
 		shadow_atlas->quadrants[i].shadows.clear();
 		shadow_atlas->quadrants[i].shadows.resize(shadow_atlas->quadrants[i].subdivision * shadow_atlas->quadrants[i].subdivision);
@@ -1410,10 +1414,14 @@ void LightStorage::shadow_atlas_set_quadrant_subdivision(RID p_atlas, int p_quad
 	for (uint32_t j = 0; j < shadow_atlas->quadrants[p_quadrant].textures.size(); j++) {
 		glDeleteTextures(1, &shadow_atlas->quadrants[p_quadrant].textures[j]);
 		glDeleteFramebuffers(1, &shadow_atlas->quadrants[p_quadrant].fbos[j]);
+		if (j < shadow_atlas->quadrants[p_quadrant].depth_rbs.size() && shadow_atlas->quadrants[p_quadrant].depth_rbs[j] != 0) {
+			glDeleteRenderbuffers(1, &shadow_atlas->quadrants[p_quadrant].depth_rbs[j]);
+		}
 	}
 
 	shadow_atlas->quadrants[p_quadrant].textures.clear();
 	shadow_atlas->quadrants[p_quadrant].fbos.clear();
+	shadow_atlas->quadrants[p_quadrant].depth_rbs.clear();
 
 	shadow_atlas->quadrants[p_quadrant].shadows.clear();
 	shadow_atlas->quadrants[p_quadrant].shadows.resize(subdiv * subdiv);
@@ -1607,10 +1615,33 @@ bool LightStorage::_shadow_atlas_find_shadow(ShadowAtlas *shadow_atlas, int *p_i
 					ERR_PRINT("Could not create omni light shadow framebuffer, status: " + GLES2::TextureStorage::get_singleton()->get_framebuffer_error(status));
 				}
 #endif
-				glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-			} else {
-				glBindTexture(GL_TEXTURE_2D, texture_id);
+			glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+			// No depth renderbuffer for cube shadows (omni stays depth-based).
+			shadow_atlas->quadrants[qidx].depth_rbs.push_back(0);
+		} else {
+			glBindTexture(GL_TEXTURE_2D, texture_id);
 
+			if (RasterizerUtilGLES2::is_gles2()) {
+				// GLES2 simplification: packed RGBA8 depth (no depth textures
+				// or shadow samplers in ES 2.0). Linear filtering would
+				// interpolate packed channels independently, so use nearest.
+				glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+				GLuint depth_rb = 0;
+				glGenRenderbuffers(1, &depth_rb);
+				glBindRenderbuffer(GL_RENDERBUFFER, depth_rb);
+				glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, size, size);
+
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0);
+				glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_rb);
+
+				shadow_atlas->quadrants[qidx].depth_rbs.push_back(depth_rb);
+			} else {
 				glTexImage2D(GL_TEXTURE_2D, 0, format, size, size, 0, GL_DEPTH_COMPONENT, type, nullptr);
 
 				glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -1623,15 +1654,18 @@ bool LightStorage::_shadow_atlas_find_shadow(ShadowAtlas *shadow_atlas, int *p_i
 
 				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, texture_id, 0);
 
-				glBindTexture(GL_TEXTURE_2D, 0);
+				shadow_atlas->quadrants[qidx].depth_rbs.push_back(0);
 			}
-			glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);
 
-			r_quadrant = qidx;
-			r_shadow = shadow_atlas->quadrants[qidx].textures.size();
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+		glBindFramebuffer(GL_FRAMEBUFFER, GLES2::TextureStorage::system_fbo);
 
-			shadow_atlas->quadrants[qidx].textures.push_back(texture_id);
-			shadow_atlas->quadrants[qidx].fbos.push_back(fbo_id);
+		r_quadrant = qidx;
+		r_shadow = shadow_atlas->quadrants[qidx].textures.size();
+
+		shadow_atlas->quadrants[qidx].textures.push_back(texture_id);
+		shadow_atlas->quadrants[qidx].fbos.push_back(fbo_id);
 
 			return true;
 		}

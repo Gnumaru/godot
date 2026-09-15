@@ -2548,31 +2548,38 @@ void RasterizerSceneGLES2::_setup_lights(const RenderDataGLES2 *p_render_data, b
 }
 
 // Render shadows
-void RasterizerSceneGLES2::_render_directional_shadows(const RenderDataGLES2 *p_render_data, const Size2i &p_viewport_size) {
+void RasterizerSceneGLES2::_render_shadows_es2(const RenderDataGLES2 *p_render_data, const Size2i &p_viewport_size) {
 	GLES2::LightStorage *light_storage = GLES2::LightStorage::get_singleton();
 
 	LocalVector<int> directional_shadows;
+	LocalVector<int> spot_shadows;
 
 	float lod_distance_multiplier = p_render_data->cam_projection.get_lod_multiplier();
 
-	// Directional lights only; omni/spot need shadow samplers (unavailable in ES 2.0).
+	// Directional and spot lights only; omni/area need shadow samplers
+	// (unavailable in ES 2.0).
 	for (int i = 0; i < p_render_data->render_shadow_count; i++) {
 		RID li = p_render_data->render_shadows[i].light;
 		RID base = light_storage->light_instance_get_base_light(li);
 
 		if (light_storage->light_get_type(base) == RSE::LIGHT_DIRECTIONAL) {
 			directional_shadows.push_back(i);
+		} else if (light_storage->light_get_type(base) == RSE::LIGHT_SPOT) {
+			spot_shadows.push_back(i);
 		}
 	}
 	if (directional_shadows.size()) {
 		light_storage->update_directional_shadow_atlas();
 	}
 
-	if (directional_shadows.size()) {
+	if (directional_shadows.size() || spot_shadows.size()) {
 		RENDER_TIMESTAMP("Render Shadows");
 
 		for (uint32_t i = 0; i < directional_shadows.size(); i++) {
 			_render_shadow_pass(p_render_data->render_shadows[directional_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[directional_shadows[i]].pass, p_render_data->render_shadows[directional_shadows[i]].instances, lod_distance_multiplier, p_render_data->screen_mesh_lod_threshold, p_render_data->render_info, p_viewport_size, p_render_data->cam_transform);
+		}
+		for (uint32_t i = 0; i < spot_shadows.size(); i++) {
+			_render_shadow_pass(p_render_data->render_shadows[spot_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[spot_shadows[i]].pass, p_render_data->render_shadows[spot_shadows[i]].instances, lod_distance_multiplier, p_render_data->screen_mesh_lod_threshold, p_render_data->render_info, p_viewport_size, p_render_data->cam_transform);
 		}
 	}
 }
@@ -2798,7 +2805,13 @@ void RasterizerSceneGLES2::_render_shadow_pass(RID p_light, RID p_shadow_atlas, 
 	}
 	RasterizerUtilGLES2::clear_depth(0.0);
 	if (needs_clear) {
-		glClear(GL_DEPTH_BUFFER_BIT);
+		if (RasterizerUtilGLES2::is_gles2()) {
+			// Packed far depth is zero (reversed-Z clear); clear color too.
+			glClearColor(0.0, 0.0, 0.0, 0.0);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		} else {
+			glClear(GL_DEPTH_BUFFER_BIT);
+		}
 	}
 
 	uint64_t spec_constant_base_flags = SceneShaderGLES2::DISABLE_LIGHTMAP |
@@ -2989,12 +3002,12 @@ void RasterizerSceneGLES2::render_scene(const Ref<RenderSceneBuffers> &p_render_
 		// If we're rendering right-side up, then we need to change the winding order.
 		glFrontFace(GL_CW);
 	}
-	// GLES2 simplification: no shadow maps on ES 2.0 except directional
-	// (packed RGBA atlas, see DIRECTIONAL_SHADOWS_GLES2).
+	// GLES2 simplification: packed RGBA shadow atlases on ES 2.0 (no shadow
+	// samplers); directional and spot supported, omni/area stay unshadowed.
 	if (!RasterizerUtilGLES2::is_gles2()) {
 		_render_shadows(&render_data, screen_size);
 	} else {
-		_render_directional_shadows(&render_data, screen_size);
+		_render_shadows_es2(&render_data, screen_size);
 	}
 
 	_setup_lights(&render_data, true, render_data.directional_light_count, render_data.omni_light_count, render_data.spot_light_count, render_data.area_light_count, render_data.directional_shadow_count);
@@ -5042,9 +5055,10 @@ RasterizerSceneGLES2::RasterizerSceneGLES2() {
 			// GLES2 simplification: shadow maps need array/depth textures
 			// (unavailable in ES 2.0); omni/spot stay unshadowed for now.
 			global_defines += "\n#define SHADOWS_DISABLED\n";
-			// ... but directional shadows use a packed RGBA atlas (no shadow
-			// samplers needed), so they stay enabled (see scene.glsl).
+			// ... but directional and spot shadows use a packed RGBA atlas (no
+			// shadow samplers needed), so they stay enabled (see scene.glsl).
 			global_defines += "\n#define DIRECTIONAL_SHADOWS_GLES2\n";
+			global_defines += "\n#define SPOT_SHADOWS_GLES2\n";
 			// GLES2 simplification: lightmaps need array textures (same reason).
 			global_defines += "\n#define DISABLE_LIGHTMAP\n";
 		}

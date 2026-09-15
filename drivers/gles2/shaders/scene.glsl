@@ -1409,9 +1409,13 @@ uniform highp samplerCubeShadow omni_shadow_texture; // texunit:-3
 uniform lowp int omni_light_index;
 #endif
 #ifdef ADDITIVE_SPOT
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(SPOT_SHADOWS_GLES2)
+#ifdef USE_GLES2_ES2
+uniform highp sampler2D spot_shadow_texture; // texunit:-3
+#else
 uniform highp sampler2DShadow spot_shadow_texture; // texunit:-3
 #endif
+#endif // !SHADOWS_DISABLED || SPOT_SHADOWS_GLES2
 uniform lowp int spot_light_index;
 #endif
 
@@ -3164,10 +3168,10 @@ void main() {
 
 #ifdef ADDITIVE_SPOT
 	float spot_shadow = 1.0f;
-#ifndef SHADOWS_DISABLED
+#if !defined(SHADOWS_DISABLED) || defined(SPOT_SHADOWS_GLES2)
 	spot_shadow = sample_shadow(spot_shadow_texture, positional_shadows[positional_shadow_index].shadow_atlas_pixel_size, shadow_coord);
 	spot_shadow = mix(1.0, spot_shadow, spot_lights[spot_light_index].shadow_opacity);
-#endif // SHADOWS_DISABLED
+#endif // !SHADOWS_DISABLED || SPOT_SHADOWS_GLES2
 
 #ifndef USE_VERTEX_LIGHTING
 	light_process_spot(spot_light_index, vertex, view, normal, f0, roughness, metallic, spot_shadow, albedo, alpha, screen_uv,

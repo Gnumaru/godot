@@ -261,9 +261,12 @@ private:
 				Shadow() {}
 			};
 
-			Vector<Shadow> shadows;
-			LocalVector<GLuint> textures;
-			LocalVector<GLuint> fbos;
+		Vector<Shadow> shadows;
+		LocalVector<GLuint> textures;
+		LocalVector<GLuint> fbos;
+		// GLES2 simplification: packed RGBA shadow atlas on ES 2.0 (no depth
+		// textures there); depth renderbuffer per allocation, parallel to fbos.
+		LocalVector<GLuint> depth_rbs;
 
 			Quadrant() {}
 		} quadrants[4];
