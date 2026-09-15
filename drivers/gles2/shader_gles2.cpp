@@ -452,6 +452,26 @@ void ShaderGLES2::_build_variant_code(StringBuilder &builder, uint32_t p_variant
 			builder.append("#extension GL_OES_standard_derivatives : enable\n");
 		}
 		builder.append("precision highp float;\nprecision highp int;\n");
+		// GLES2 simplification: ES 2.0 has no inverse()/transpose() builtins
+		// (user and editor shaders may still use them, e.g. gizmo billboards).
+		// Provide mat3 manual versions and redirect the builtins to them.
+		// (mat2/mat4 uses keep failing loudly, as before.)
+		builder.append("mat3 godot_inverse_mat3(mat3 m) {\n");
+		builder.append("\tvec3 c0 = m[0];\n");
+		builder.append("\tvec3 c1 = m[1];\n");
+		builder.append("\tvec3 c2 = m[2];\n");
+		builder.append("\tvec3 r0 = vec3(c1.y * c2.z - c1.z * c2.y, c1.z * c2.x - c1.x * c2.z, c1.x * c2.y - c1.y * c2.x);\n");
+		builder.append("\tvec3 r1 = vec3(c2.y * c0.z - c2.z * c0.y, c2.z * c0.x - c2.x * c0.z, c2.x * c0.y - c2.y * c0.x);\n");
+		builder.append("\tvec3 r2 = vec3(c0.y * c1.z - c0.z * c1.y, c0.z * c1.x - c0.x * c1.z, c0.x * c1.y - c0.y * c1.x);\n");
+		builder.append("\tfloat det = dot(c0, r0);\n");
+		builder.append("\tdet = det == 0.0 ? 1.0 : det;\n");
+		builder.append("\treturn mat3(vec3(r0.x, r1.x, r2.x) / det, vec3(r0.y, r1.y, r2.y) / det, vec3(r0.z, r1.z, r2.z) / det);\n");
+		builder.append("}\n");
+		builder.append("mat3 godot_transpose_mat3(mat3 m) {\n");
+		builder.append("\treturn mat3(vec3(m[0].x, m[1].x, m[2].x), vec3(m[0].y, m[1].y, m[2].y), vec3(m[0].z, m[1].z, m[2].z));\n");
+		builder.append("}\n");
+		builder.append("#define inverse(m) godot_inverse_mat3(m)\n");
+		builder.append("#define transpose(m) godot_transpose_mat3(m)\n");
 	} else {
 		builder.append("#version 300 es\n");
 	}

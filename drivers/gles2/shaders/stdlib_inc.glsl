@@ -117,6 +117,8 @@ bool mask_overlaps_mask(int a, int b) {
 
 #ifdef USE_GLES2_ES2
 // ES 2.0 has no transpose()/inverse(): adjugate over determinant.
+// Returns transpose(inverse(m)) (the normal matrix); columns are the
+// adjugate rows, i.e. the transposed cofactor matrix over the determinant.
 mat3 godot_transpose_inverse(mat3 m) {
 	vec3 c0 = m[0];
 	vec3 c1 = m[1];
@@ -126,6 +128,6 @@ mat3 godot_transpose_inverse(mat3 m) {
 	vec3 r2 = vec3(c0.y * c1.z - c0.z * c1.y, c0.z * c1.x - c0.x * c1.z, c0.x * c1.y - c0.y * c1.x);
 	float det = dot(c0, r0);
 	det = det == 0.0 ? 1.0 : det;
-	return mat3(vec3(r0.x, r1.x, r2.x) / det, vec3(r0.y, r1.y, r2.y) / det, vec3(r0.z, r1.z, r2.z) / det);
+	return mat3(r0, r1, r2) / det;
 }
 #endif // USE_GLES2_ES2
