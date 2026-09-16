@@ -53,8 +53,12 @@ uniform float luminance_multiplier;
 
 #ifdef USE_GLOW
 uniform sampler2D glow_color; // texunit:1
+uniform sampler2D glow_color1; // texunit:4
+uniform sampler2D glow_color2; // texunit:5
+uniform sampler2D glow_color3; // texunit:6
 uniform float glow_intensity;
 uniform float srgb_white;
+uniform vec4 glow_weights;
 #endif // USE_GLOW
 
 #if defined(USE_GLOW) || defined(USE_FXAA)
@@ -125,23 +129,38 @@ vec4 apply_fxaa(vec4 color, vec2 uv_interp, vec2 pixel_size) {
 #endif // USE_FXAA
 
 #ifdef USE_GLOW
-vec4 get_glow_color(vec2 uv) {
-	vec2 half_pixel = pixel_size * 0.5;
+// 8-tap tent over one glow stage (dual-filtering upsample kernel,
+// same as the old single-stage composite).
+vec4 glow_tent(sampler2D tex, vec2 uv, vec2 ps) {
+	vec2 half_pixel = ps * 0.5;
 
-	vec4 color = textureLod(glow_color, uv + vec2(-half_pixel.x * 2.0, 0.0), 0.0);
-	color += textureLod(glow_color, uv + vec2(-half_pixel.x, half_pixel.y), 0.0) * 2.0;
-	color += textureLod(glow_color, uv + vec2(0.0, half_pixel.y * 2.0), 0.0);
-	color += textureLod(glow_color, uv + vec2(half_pixel.x, half_pixel.y), 0.0) * 2.0;
-	color += textureLod(glow_color, uv + vec2(half_pixel.x * 2.0, 0.0), 0.0);
-	color += textureLod(glow_color, uv + vec2(half_pixel.x, -half_pixel.y), 0.0) * 2.0;
-	color += textureLod(glow_color, uv + vec2(0.0, -half_pixel.y * 2.0), 0.0);
-	color += textureLod(glow_color, uv + vec2(-half_pixel.x, -half_pixel.y), 0.0) * 2.0;
+	vec4 color = textureLod(tex, uv + vec2(-half_pixel.x * 2.0, 0.0), 0.0);
+	color += textureLod(tex, uv + vec2(-half_pixel.x, half_pixel.y), 0.0) * 2.0;
+	color += textureLod(tex, uv + vec2(0.0, half_pixel.y * 2.0), 0.0);
+	color += textureLod(tex, uv + vec2(half_pixel.x, half_pixel.y), 0.0) * 2.0;
+	color += textureLod(tex, uv + vec2(half_pixel.x * 2.0, 0.0), 0.0);
+	color += textureLod(tex, uv + vec2(half_pixel.x, -half_pixel.y), 0.0) * 2.0;
+	color += textureLod(tex, uv + vec2(0.0, -half_pixel.y * 2.0), 0.0);
+	color += textureLod(tex, uv + vec2(-half_pixel.x, -half_pixel.y), 0.0) * 2.0;
+
+	return color / 12.0;
+}
+
+// Godot 3 style multiband composite: each pyramid stage holds one blur
+// band (filter/downsample only, no upsample merge), weighted by the
+// environment glow levels. Stage k is 2^(k+1) times smaller than the
+// source, hence the scaled pixel sizes.
+vec4 get_glow_color(vec2 uv) {
+	vec4 color = glow_tent(glow_color, uv, pixel_size) * glow_weights.x;
+	color += glow_tent(glow_color1, uv, pixel_size * 2.0) * glow_weights.y;
+	color += glow_tent(glow_color2, uv, pixel_size * 4.0) * glow_weights.z;
+	color += glow_tent(glow_color3, uv, pixel_size * 8.0) * glow_weights.w;
 
 #ifdef USE_LUMINANCE_MULTIPLIER
 	color = color / luminance_multiplier;
 #endif
 
-	return color / 12.0;
+	return color;
 }
 #endif // USE_GLOW
 

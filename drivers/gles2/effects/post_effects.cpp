@@ -110,7 +110,7 @@ void PostEffects::post_copy(
 		Size2i p_source_size, float p_luminance_multiplier, const Glow::Level *p_glow_buffers, float p_glow_intensity,
 		float p_srgb_white, uint32_t p_view, bool p_use_multiview, uint64_t p_spec_constants, bool p_bilinear_filtering,
 		float p_exposure, int32_t p_tonemapper, const Vector4 &p_tonemapper_params,
-		float p_brightness, float p_contrast, float p_saturation) {
+		float p_brightness, float p_contrast, float p_saturation, Vector4 p_glow_weights) {
 	glDisable(GL_DEPTH_TEST);
 	glDepthMask(GL_FALSE);
 	glDisable(GL_BLEND);
@@ -172,9 +172,16 @@ void PostEffects::post_copy(
 	if (p_glow_buffers != nullptr) {
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D, p_glow_buffers[0].color);
+		glActiveTexture(GL_TEXTURE4);
+		glBindTexture(GL_TEXTURE_2D, p_glow_buffers[1].color);
+		glActiveTexture(GL_TEXTURE5);
+		glBindTexture(GL_TEXTURE_2D, p_glow_buffers[2].color);
+		glActiveTexture(GL_TEXTURE6);
+		glBindTexture(GL_TEXTURE_2D, p_glow_buffers[3].color);
 
 		post.shader.version_set_uniform(PostShaderGLES2::GLOW_INTENSITY, p_glow_intensity, post.shader_version, mode, flags);
 		post.shader.version_set_uniform(PostShaderGLES2::SRGB_WHITE, p_srgb_white, post.shader_version, mode, flags);
+		post.shader.version_set_uniform(PostShaderGLES2::GLOW_WEIGHTS, p_glow_weights, post.shader_version, mode, flags);
 	}
 
 	// GLES2 simplification: pixel_size feeds the glow tent filter and FXAA
@@ -200,6 +207,12 @@ void PostEffects::post_copy(
 	// Reset state
 	if (p_glow_buffers != nullptr) {
 		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE4);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE5);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glActiveTexture(GL_TEXTURE6);
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 	if (p_ssao_enabled) {

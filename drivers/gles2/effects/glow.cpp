@@ -139,7 +139,9 @@ void Glow::process_glow(GLuint p_source_color, Size2i p_size, const Glow::Level 
 		_draw_screen_triangle();
 	}
 
-	// Continue with downsampling
+	// Continue with downsampling. Each stage holds one blur band and feeds
+	// the multiband composite in PostEffects directly (Godot 3 style);
+	// unlike the old single-blur design there is no upsample merge pass.
 	{
 		bool success = glow.shader.version_bind_shader(glow.shader_version, GlowShaderGLES2::MODE_DOWNSAMPLE, 0);
 		if (!success) {
@@ -154,26 +156,6 @@ void Glow::process_glow(GLuint p_source_color, Size2i p_size, const Glow::Level 
 			glBindTexture(GL_TEXTURE_2D, p_glow_buffers[i - 1].color);
 
 			glow.shader.version_set_uniform(GlowShaderGLES2::PIXEL_SIZE, 1.0 / p_glow_buffers[i].size.x, 1.0 / p_glow_buffers[i].size.y, glow.shader_version, GlowShaderGLES2::MODE_DOWNSAMPLE);
-
-			_draw_screen_triangle();
-		}
-	}
-
-	// Now upsample
-	{
-		bool success = glow.shader.version_bind_shader(glow.shader_version, GlowShaderGLES2::MODE_UPSAMPLE, 0);
-		if (!success) {
-			return;
-		}
-
-		for (int i = 2; i >= 0; i--) {
-			glBindFramebuffer(GL_FRAMEBUFFER, p_glow_buffers[i].fbo);
-			glViewport(0, 0, p_glow_buffers[i].size.x, p_glow_buffers[i].size.y);
-
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, p_glow_buffers[i + 1].color);
-
-			glow.shader.version_set_uniform(GlowShaderGLES2::PIXEL_SIZE, 1.0 / p_glow_buffers[i].size.x, 1.0 / p_glow_buffers[i].size.y, glow.shader_version, GlowShaderGLES2::MODE_UPSAMPLE);
 
 			_draw_screen_triangle();
 		}

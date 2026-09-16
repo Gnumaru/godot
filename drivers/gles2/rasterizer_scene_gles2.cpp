@@ -3560,6 +3560,20 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 		}
 	}
 
+	// Godot 3 style per-level glow weights: the 4 pyramid stages map to
+	// user levels 1-4 (RS already applies glow_normalized). Levels 5-7
+	// have no stage in this 4-level low-end pyramid and are ignored.
+	Vector4 post_glow_weights(1, 1, 1, 1);
+	if (glow_enabled && p_render_data->environment.is_valid()) {
+		Vector<float> levels = environment_get_glow_levels(p_render_data->environment);
+		if (levels.size() == 7) {
+			if (levels[4] > 0.0 || levels[5] > 0.0 || levels[6] > 0.0) {
+				WARN_PRINT_ONCE("Glow levels 5-7 have no stage in the 4-level GLES2 (Compatibility) glow pyramid and are ignored.");
+			}
+			post_glow_weights = Vector4(levels[0], levels[1], levels[2], levels[3]);
+		}
+	}
+
 	if (view_count == 1) {
 		// Resolve if needed.
 		if (fbo_msaa_3d != 0 && msaa3d_needs_resolve) {
@@ -3620,7 +3634,7 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 				depth_buffer, ssao_enabled, ssao_quality, ssao_strength, ssao_radius,
 				internal_size, p_render_data->luminance_multiplier, glow_buffers, glow_intensity,
 				srgb_white, 0, false, post_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST,
-				post_exposure, post_tonemapper, post_tonemapper_params, post_brightness, post_contrast, post_saturation);
+				post_exposure, post_tonemapper, post_tonemapper_params, post_brightness, post_contrast, post_saturation, post_glow_weights);
 
 			// Copy depth buffer
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_int);
@@ -3694,7 +3708,8 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 				post_effects->post_copy(fbos[2], target_size, source_color,
 						read_depth, ssao_enabled, ssao_quality, ssao_strength, ssao_radius,
 						internal_size, p_render_data->luminance_multiplier, glow_buffers, glow_intensity,
-						srgb_white, v, true, post_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST);
+						srgb_white, v, true, post_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST,
+						1.0, 0, Vector4(), 1.0, 1.0, 1.0, post_glow_weights);
 			}
 
 			// Copy depth
