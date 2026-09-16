@@ -173,10 +173,13 @@ void PostEffects::post_copy(
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D, p_glow_buffers[0].color);
 
-		post.shader.version_set_uniform(PostShaderGLES2::PIXEL_SIZE, 1.0 / p_source_size.x, 1.0 / p_source_size.y, post.shader_version, mode, flags);
 		post.shader.version_set_uniform(PostShaderGLES2::GLOW_INTENSITY, p_glow_intensity, post.shader_version, mode, flags);
 		post.shader.version_set_uniform(PostShaderGLES2::SRGB_WHITE, p_srgb_white, post.shader_version, mode, flags);
 	}
+
+	// GLES2 simplification: pixel_size feeds the glow tent filter and FXAA
+	// (plain uniform here instead of a UBO). Missing locations are a no-op.
+	post.shader.version_set_uniform(PostShaderGLES2::PIXEL_SIZE, 1.0 / p_source_size.x, 1.0 / p_source_size.y, post.shader_version, mode, flags);
 
 	post.shader.version_set_uniform(PostShaderGLES2::VIEW, float(p_view), post.shader_version, mode, flags);
 	post.shader.version_set_uniform(PostShaderGLES2::LUMINANCE_MULTIPLIER, p_luminance_multiplier, post.shader_version, mode, flags);

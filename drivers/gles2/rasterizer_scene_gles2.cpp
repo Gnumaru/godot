@@ -2906,8 +2906,11 @@ void RasterizerSceneGLES2::render_scene(const Ref<RenderSceneBuffers> &p_render_
 		glow_enabled = environment_get_glow_enabled(p_environment);
 		ssao_enabled = environment_get_ssao_enabled(p_environment);
 		use_bcs = environment_get_adjustments_enabled(p_environment);
+		// Godot 3 style FXAA runs in the post pass (no Environment property in
+		// Godot 4; project setting), so it also requires the internal buffer.
+		bool use_fxaa = bool(GLOBAL_GET("rendering/gl_compatibility/fxaa_enabled"));
 		bool canvas_tonemapping = environment_get_background(p_environment) == RSE::ENV_BG_CANVAS && environment_get_tone_mapper(p_environment) != RSE::ENV_TONE_MAPPER_LINEAR;
-		if (glow_enabled || ssao_enabled || use_bcs || canvas_tonemapping) {
+		if (glow_enabled || ssao_enabled || use_bcs || use_fxaa || canvas_tonemapping) {
 			apply_environment_effects_in_post = true;
 		}
 	}
@@ -3499,12 +3502,12 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 		ssao_radius = environment_get_ssao_radius(p_render_data->environment) * 0.5;
 	}
 
-	uint64_t bcs_spec_constants = 0;
+	uint64_t post_spec_constants = 0;
 	if (p_render_data->environment.is_valid()) {
 		bool use_bcs = environment_get_adjustments_enabled(p_render_data->environment);
 		RID color_correction_texture = environment_get_color_correction(p_render_data->environment);
 		if (use_bcs) {
-			bcs_spec_constants |= PostShaderGLES2::USE_BCS;
+			post_spec_constants |= PostShaderGLES2::USE_BCS;
 
 			if (color_correction_texture.is_valid()) {
 				bool use_1d_lut = environment_get_use_1d_color_correction(p_render_data->environment);
@@ -3512,11 +3515,11 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 				if (RasterizerUtilGLES2::is_gles2() && !use_1d_lut) {
 					WARN_PRINT_ONCE("3D color correction LUTs are not supported in the GLES2 (Compatibility) renderer; ignoring.");
 				} else {
-					bcs_spec_constants |= PostShaderGLES2::USE_COLOR_CORRECTION;
+					post_spec_constants |= PostShaderGLES2::USE_COLOR_CORRECTION;
 
 					GLenum texture_target = GL_TEXTURE_3D;
 					if (use_1d_lut) {
-						bcs_spec_constants |= PostShaderGLES2::USE_1D_LUT;
+						post_spec_constants |= PostShaderGLES2::USE_1D_LUT;
 						texture_target = GL_TEXTURE_2D;
 					}
 
@@ -3529,6 +3532,31 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 					glTexParameteri(texture_target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 				}
 			}
+		}
+
+		// Godot 3 style glow blend modes (GLES3 Compatibility always uses screen).
+		if (glow_enabled) {
+			switch (environment_get_glow_blend_mode(p_render_data->environment)) {
+				case RSE::ENV_GLOW_BLEND_MODE_ADDITIVE:
+					post_spec_constants |= PostShaderGLES2::USE_GLOW_ADDITIVE;
+					break;
+				case RSE::ENV_GLOW_BLEND_MODE_SOFTLIGHT:
+					post_spec_constants |= PostShaderGLES2::USE_GLOW_SOFTLIGHT;
+					break;
+				case RSE::ENV_GLOW_BLEND_MODE_REPLACE:
+					post_spec_constants |= PostShaderGLES2::USE_GLOW_REPLACE;
+					break;
+				case RSE::ENV_GLOW_BLEND_MODE_MIX:
+					post_spec_constants |= PostShaderGLES2::USE_GLOW_MIX;
+					break;
+				default:
+					break; // SCREEN is the default USE_GLOW behavior.
+			}
+		}
+
+		// Godot 3 style FXAA (no Environment property in Godot 4; project setting).
+		if (bool(GLOBAL_GET("rendering/gl_compatibility/fxaa_enabled"))) {
+			post_spec_constants |= PostShaderGLES2::USE_FXAA;
 		}
 	}
 
@@ -3591,7 +3619,7 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 		post_effects->post_copy(fbo_rt, target_size, color,
 				depth_buffer, ssao_enabled, ssao_quality, ssao_strength, ssao_radius,
 				internal_size, p_render_data->luminance_multiplier, glow_buffers, glow_intensity,
-				srgb_white, 0, false, bcs_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST,
+				srgb_white, 0, false, post_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST,
 				post_exposure, post_tonemapper, post_tonemapper_params, post_brightness, post_contrast, post_saturation);
 
 			// Copy depth buffer
@@ -3666,7 +3694,7 @@ void RasterizerSceneGLES2::_render_post_processing(const RenderDataGLES2 *p_rend
 				post_effects->post_copy(fbos[2], target_size, source_color,
 						read_depth, ssao_enabled, ssao_quality, ssao_strength, ssao_radius,
 						internal_size, p_render_data->luminance_multiplier, glow_buffers, glow_intensity,
-						srgb_white, v, true, bcs_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST);
+						srgb_white, v, true, post_spec_constants, p_render_data->render_buffers->scaling_3d_mode != RSE::VIEWPORT_SCALING_3D_MODE_NEAREST);
 			}
 
 			// Copy depth

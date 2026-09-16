@@ -6,6 +6,11 @@ mode_default =
 
 USE_MULTIVIEW = false
 USE_GLOW = false
+USE_GLOW_ADDITIVE = false
+USE_GLOW_SOFTLIGHT = false
+USE_GLOW_REPLACE = false
+USE_GLOW_MIX = false
+USE_FXAA = false
 USE_LUMINANCE_MULTIPLIER = false
 USE_BCS = false
 USE_COLOR_CORRECTION = false
@@ -48,10 +53,78 @@ uniform float luminance_multiplier;
 
 #ifdef USE_GLOW
 uniform sampler2D glow_color; // texunit:1
-uniform vec2 pixel_size;
 uniform float glow_intensity;
 uniform float srgb_white;
+#endif // USE_GLOW
 
+#if defined(USE_GLOW) || defined(USE_FXAA)
+uniform vec2 pixel_size;
+#endif
+
+#ifdef USE_FXAA
+// FXAA 3.11 console version, ported from Godot 3 GLES2 tonemap.glsl.
+// Applied before glow to preserve the "bleed" effect of glow.
+// Plain function (not a #define): #-lines skip the ES2 translator,
+// so textureLod must stay in translatable code.
+vec4 fxaa_sample(vec2 uv) {
+#ifdef USE_MULTIVIEW
+	return textureLod(source_color, vec3(uv, view), 0.0);
+#else
+	return textureLod(source_color, uv, 0.0);
+#endif
+}
+#define FXAA_SOURCE_SAMPLE(m_uv) fxaa_sample(m_uv)
+
+vec4 apply_fxaa(vec4 color, vec2 uv_interp, vec2 pixel_size) {
+	const float FXAA_REDUCE_MIN = (1.0 / 128.0);
+	const float FXAA_REDUCE_MUL = (1.0 / 8.0);
+	const float FXAA_SPAN_MAX = 8.0;
+	const vec3 luma = vec3(0.299, 0.587, 0.114);
+
+	// Godot 3 style DISABLE_ALPHA: the 3D internal buffer carries no
+	// meaningful alpha (it reads back as 0 in the linear HDR path, which
+	// would collapse luma and zero the output), so FXAA works opaque.
+	color.a = 1.0;
+
+	vec4 rgbNW = FXAA_SOURCE_SAMPLE(uv_interp + vec2(-0.5, -0.5) * pixel_size);
+	vec4 rgbNE = FXAA_SOURCE_SAMPLE(uv_interp + vec2(0.5, -0.5) * pixel_size);
+	vec4 rgbSW = FXAA_SOURCE_SAMPLE(uv_interp + vec2(-0.5, 0.5) * pixel_size);
+	vec4 rgbSE = FXAA_SOURCE_SAMPLE(uv_interp + vec2(0.5, 0.5) * pixel_size);
+	vec3 rgbM = color.rgb;
+
+	float lumaNW = dot(rgbNW.rgb, luma);
+	float lumaNE = dot(rgbNE.rgb, luma);
+	float lumaSW = dot(rgbSW.rgb, luma);
+	float lumaSE = dot(rgbSE.rgb, luma);
+	float lumaM = dot(rgbM, luma);
+
+	float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+	float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+
+	vec2 dir;
+	dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+	dir.y = ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+
+	float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) *
+					(0.25 * FXAA_REDUCE_MUL),
+			FXAA_REDUCE_MIN);
+
+	float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+	dir = min(vec2(FXAA_SPAN_MAX, FXAA_SPAN_MAX),
+				  max(vec2(-FXAA_SPAN_MAX, -FXAA_SPAN_MAX),
+						 dir * rcpDirMin)) *
+			pixel_size;
+
+	vec4 rgbA = 0.5 * (FXAA_SOURCE_SAMPLE(uv_interp + dir * (1.0 / 3.0 - 0.5)) + FXAA_SOURCE_SAMPLE(uv_interp + dir * (2.0 / 3.0 - 0.5)));
+	vec4 rgbB = rgbA * 0.5 + 0.25 * (FXAA_SOURCE_SAMPLE(uv_interp + dir * -0.5) + FXAA_SOURCE_SAMPLE(uv_interp + dir * 0.5));
+
+	float lumaB = dot(rgbB.rgb, luma);
+	vec4 color_output = ((lumaB < lumaMin) || (lumaB > lumaMax)) ? rgbA : rgbB;
+	return vec4(color_output.rgb, 1.0);
+}
+#endif // USE_FXAA
+
+#ifdef USE_GLOW
 vec4 get_glow_color(vec2 uv) {
 	vec2 half_pixel = pixel_size * 0.5;
 
@@ -125,6 +198,14 @@ void main() {
 	vec4 color = texture(source_color, uv_interp);
 #endif
 
+#ifdef USE_FXAA
+	// FXAA must be performed before glow to preserve the "bleed" effect of glow.
+	// Note: this runs on the raw source (before the luminance_multiplier
+	// divide below) so rgbM matches the re-sampled neighbors; scaling a
+	// divided rgbM against raw samples would darken the output by lum.
+	color = apply_fxaa(color, uv_interp, pixel_size);
+#endif
+
 #ifdef USE_LUMINANCE_MULTIPLIER
 	color = color / luminance_multiplier;
 #endif
@@ -137,6 +218,22 @@ void main() {
 
 	vec4 glow = get_glow_color(uv_interp) * glow_intensity;
 
+#if defined(USE_GLOW_ADDITIVE)
+	// Godot 3 style additive (its default when no blend mode is selected).
+	color.rgb += glow.rgb;
+#elif defined(USE_GLOW_SOFTLIGHT)
+	// Godot 3 style softlight.
+	vec3 soft_glow = glow.rgb * vec3(0.5) + vec3(0.5);
+
+	color.r = (soft_glow.r <= 0.5) ? (color.r - (1.0 - 2.0 * soft_glow.r) * color.r * (1.0 - color.r)) : (((soft_glow.r > 0.5) && (color.r <= 0.25)) ? (color.r + (2.0 * soft_glow.r - 1.0) * (4.0 * color.r * (4.0 * color.r + 1.0) * (color.r - 1.0) + 7.0 * color.r)) : (color.r + (2.0 * soft_glow.r - 1.0) * (sqrt(color.r) - color.r)));
+	color.g = (soft_glow.g <= 0.5) ? (color.g - (1.0 - 2.0 * soft_glow.g) * color.g * (1.0 - color.g)) : (((soft_glow.g > 0.5) && (color.g <= 0.25)) ? (color.g + (2.0 * soft_glow.g - 1.0) * (4.0 * color.g * (4.0 * color.g + 1.0) * (color.g - 1.0) + 7.0 * color.g)) : (color.g + (2.0 * soft_glow.g - 1.0) * (sqrt(color.g) - color.g)));
+	color.b = (soft_glow.b <= 0.5) ? (color.b - (1.0 - 2.0 * soft_glow.b) * color.b * (1.0 - color.b)) : (((soft_glow.b > 0.5) && (color.b <= 0.25)) ? (color.b + (2.0 * soft_glow.b - 1.0) * (4.0 * color.b * (4.0 * color.b + 1.0) * (color.b - 1.0) + 7.0 * color.b)) : (color.b + (2.0 * soft_glow.b - 1.0) * (sqrt(color.b) - color.b)));
+#elif defined(USE_GLOW_REPLACE)
+	color.rgb = glow.rgb;
+#elif defined(USE_GLOW_MIX)
+	// Same semantics as the Forward/Mobile renderer MIX mode.
+	color.rgb = color.rgb * (1.0 - glow_intensity) + glow.rgb;
+#else
 	// Glow always uses the screen blend mode in the Compatibility renderer:
 
 	// Glow cannot be above 1.0 after normalizing and should be non-negative
@@ -155,6 +252,7 @@ void main() {
 
 	// The following is a mathematically simplified version of the above.
 	color.rgb = color.rgb + glow.rgb - (color.rgb * glow.rgb / srgb_white);
+#endif // glow blend mode
 #endif // USE_GLOW
 
 	color.rgb = srgb_to_linear(color.rgb);
