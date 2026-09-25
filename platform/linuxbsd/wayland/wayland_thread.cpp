@@ -1057,6 +1057,11 @@ void WaylandThread::_wl_registry_on_global_remove(void *data, struct wl_registry
 				ss->wp_primary_selection_source = nullptr;
 			}
 
+			if (ss->wp_primary_selection_source_replaced) {
+				zwp_primary_selection_source_v1_destroy(ss->wp_primary_selection_source_replaced);
+				ss->wp_primary_selection_source_replaced = nullptr;
+			}
+
 			if (ss->wp_primary_selection_offer) {
 				memfree(wp_primary_selection_offer_get_offer_state(ss->wp_primary_selection_offer));
 				zwp_primary_selection_offer_v1_destroy(ss->wp_primary_selection_offer);
@@ -2819,6 +2824,11 @@ void WaylandThread::_wl_data_device_on_selection(void *data, struct wl_data_devi
 	}
 
 	ss->wl_data_offer_selection = id;
+
+	// Compositors are free to not send us the selection we're the owner of, but
+	// when they do, the offer refers to our own data source and reading from it
+	// would mean waiting for ourselves to hand the data over.
+	ss->wl_data_offer_selection_is_own = id != nullptr && ss->wl_data_source_selection != nullptr;
 }
 
 void WaylandThread::_wl_data_offer_on_offer(void *data, struct wl_data_offer *wl_data_offer, const char *mime_type) {
@@ -2850,6 +2860,12 @@ void WaylandThread::_wl_data_source_on_send(void *data, struct wl_data_source *w
 	if (wl_data_source == ss->wl_data_source_selection) {
 		DEBUG_LOG_WAYLAND_THREAD("Clipboard: requested selection.");
 		_clipboard_send(ss->selection_data, mime_type, fd);
+	} else if (wl_data_source == ss->wl_data_source_selection_replaced) {
+		// A source we replaced, but the compositor hasn't cancelled it yet. It
+		// still owns the data it was created for, and whoever asked for it
+		// expects to get it.
+		DEBUG_LOG_WAYLAND_THREAD("Clipboard: requested replaced selection.");
+		_clipboard_send(ss->selection_data_replaced, mime_type, fd);
 	}
 
 	close(fd);
@@ -2859,15 +2875,23 @@ void WaylandThread::_wl_data_source_on_cancelled(void *data, struct wl_data_sour
 	SeatState *ss = (SeatState *)data;
 	ERR_FAIL_NULL(ss);
 
-	wl_data_source_destroy(wl_data_source);
-
 	if (wl_data_source == ss->wl_data_source_selection) {
 		ss->wl_data_source_selection = nullptr;
+		ss->selection_mimes.clear();
 		ss->selection_data.clear();
 
 		DEBUG_LOG_WAYLAND_THREAD("Clipboard: selection set by another program.");
-		return;
+	} else if (wl_data_source == ss->wl_data_source_selection_replaced) {
+		// A source we already replaced, the compositor is just telling us we're
+		// done with it.
+		ss->wl_data_source_selection_replaced = nullptr;
+		ss->selection_data_replaced.clear();
 	}
+
+	// The source is dead either way, and this is the only place we get to know
+	// about it, so get rid of it here. Doing it only once matters, as
+	// `selection_set_text()` also disposes of replaced sources.
+	wl_data_source_destroy(wl_data_source);
 }
 
 void WaylandThread::_wl_data_source_on_dnd_drop_performed(void *data, struct wl_data_source *wl_data_source) {
@@ -3162,6 +3186,11 @@ void WaylandThread::_wp_primary_selection_device_on_selection(void *data, struct
 	}
 
 	ss->wp_primary_selection_offer = id;
+
+	// Compositors are free to not send us the selection we're the owner of, but
+	// when they do, the offer refers to our own data source and reading from it
+	// would mean waiting for us to hand the data over.
+	ss->wp_primary_selection_offer_is_own = id != nullptr && ss->wp_primary_selection_source != nullptr;
 }
 
 void WaylandThread::_wp_primary_selection_offer_on_offer(void *data, struct zwp_primary_selection_offer_v1 *wp_primary_selection_offer_v1, const char *mime_type) {
@@ -3184,6 +3213,12 @@ void WaylandThread::_wp_primary_selection_source_on_send(void *data, struct zwp_
 	if (wp_primary_selection_source_v1 == ss->wp_primary_selection_source) {
 		DEBUG_LOG_WAYLAND_THREAD("Clipboard: requested primary selection.");
 		_clipboard_send(ss->primary_data, mime_type, fd);
+	} else if (wp_primary_selection_source_v1 == ss->wp_primary_selection_source_replaced) {
+		// A source we replaced, but the compositor hasn't cancelled it yet. It
+		// still owns the data it was created for, and whoever asked for it
+		// expects to get it.
+		DEBUG_LOG_WAYLAND_THREAD("Clipboard: requested replaced primary selection.");
+		_clipboard_send(ss->primary_data_replaced, mime_type, fd);
 	}
 
 	close(fd);
@@ -3194,14 +3229,22 @@ void WaylandThread::_wp_primary_selection_source_on_cancelled(void *data, struct
 	ERR_FAIL_NULL(ss);
 
 	if (wp_primary_selection_source_v1 == ss->wp_primary_selection_source) {
-		zwp_primary_selection_source_v1_destroy(ss->wp_primary_selection_source);
 		ss->wp_primary_selection_source = nullptr;
-
+		ss->primary_mimes.clear();
 		ss->primary_data.clear();
 
 		DEBUG_LOG_WAYLAND_THREAD("Clipboard: primary selection set by another program.");
-		return;
+	} else if (wp_primary_selection_source_v1 == ss->wp_primary_selection_source_replaced) {
+		// A source we already replaced, the compositor is just telling us we're
+		// done with it.
+		ss->wp_primary_selection_source_replaced = nullptr;
+		ss->primary_data_replaced.clear();
 	}
+
+	// The source is dead either way, and this is the only place we get to know
+	// about it, so get rid of it here. Doing it only once matters, as
+	// `primary_set_text()` also disposes of replaced sources.
+	zwp_primary_selection_source_v1_destroy(wp_primary_selection_source_v1);
 }
 
 void WaylandThread::_wp_tablet_seat_on_tablet_added(void *data, struct zwp_tablet_seat_v2 *wp_tablet_seat_v2, struct zwp_tablet_v2 *id) {
@@ -5905,24 +5948,50 @@ void WaylandThread::selection_set_text(const String &p_text) {
 		return;
 	}
 
-	ss->selection_data = p_text.to_utf8_buffer();
-
-	if (ss->wl_data_source_selection != nullptr) {
-		wl_data_source_destroy(ss->wl_data_source_selection);
-		ss->wl_data_source_selection = nullptr;
+	// A source we replaced, but the compositor hasn't told us it's gone yet (it
+	// refuses to, or we're in a hurry to copy again). Dispose of it now.
+	if (ss->wl_data_source_selection_replaced != nullptr) {
+		wl_data_source_destroy(ss->wl_data_source_selection_replaced);
+		ss->wl_data_source_selection_replaced = nullptr;
+		ss->selection_data_replaced.clear();
 	}
 
-	ss->wl_data_source_selection = wl_data_device_manager_create_data_source(registry.wl_data_device_manager);
-	wl_data_source_add_listener(ss->wl_data_source_selection, &wl_data_source_listener, ss);
-	wl_data_source_offer(ss->wl_data_source_selection, "text/plain;charset=utf-8");
-	wl_data_source_offer(ss->wl_data_source_selection, "text/plain");
+	// The data the source we're about to replace was created for. The compositor
+	// can still ask that source for it until it cancels it.
+	ss->selection_data_replaced = ss->wl_data_source_selection != nullptr ? ss->selection_data : Vector<uint8_t>();
+	ss->selection_data = p_text.to_utf8_buffer();
+
+	struct wl_data_source *new_source = wl_data_device_manager_create_data_source(registry.wl_data_device_manager);
+	wl_data_source_add_listener(new_source, &wl_data_source_listener, ss);
+	wl_data_source_offer(new_source, "text/plain;charset=utf-8");
+	wl_data_source_offer(new_source, "text/plain");
+
+	// Hand the new source over *before* destroying the old one. Compositors treat
+	// the destruction of the source they currently hold as the selection being
+	// gone, and will announce the selection as empty (to every client, including
+	// clipboard managers) until a new source shows up. Clipboard managers that
+	// asynchronously take over the selection end up in between those two
+	// announcements and can end up serving a stale selection back to us.
+	ss->wl_data_source_selection_replaced = ss->wl_data_source_selection;
+	ss->wl_data_source_selection = new_source;
+	ss->selection_mimes.insert("text/plain;charset=utf-8");
+	ss->selection_mimes.insert("text/plain");
 
 	// TODO: Implement a good way of getting the latest serial from the user.
-	wl_data_device_set_selection(ss->wl_data_device, ss->wl_data_source_selection, MAX(ss->pointer_data.button_serial, ss->last_key_pressed_serial));
+	wl_data_device_set_selection(ss->wl_data_device, new_source, MAX(ss->pointer_data.button_serial, ss->last_key_pressed_serial));
 
 	// Wait for the message to get to the server before continuing, otherwise the
-	// clipboard update might come with a delay.
+	// clipboard update might come with a delay. This is also where the compositor
+	// cancels the source we replaced, if it's going to.
 	wl_display_roundtrip(wl_display);
+
+	// Compositors are expected to cancel the source we replaced, but we're not
+	// going to leak it if they don't.
+	if (ss->wl_data_source_selection_replaced != nullptr) {
+		wl_data_source_destroy(ss->wl_data_source_selection_replaced);
+		ss->wl_data_source_selection_replaced = nullptr;
+		ss->selection_data_replaced.clear();
+	}
 }
 
 bool WaylandThread::selection_has_mime(const String &p_mime) const {
@@ -5931,6 +6000,11 @@ bool WaylandThread::selection_has_mime(const String &p_mime) const {
 	if (ss == nullptr) {
 		DEBUG_LOG_WAYLAND_THREAD("Couldn't get selection, current seat not set.");
 		return false;
+	}
+
+	if (ss->wl_data_source_selection != nullptr) {
+		// We're the ones offering it.
+		return ss->selection_mimes.has(p_mime);
 	}
 
 	OfferState *os = wl_data_offer_get_offer_state(ss->wl_data_offer_selection);
@@ -5948,20 +6022,23 @@ Vector<uint8_t> WaylandThread::selection_get_mime(const String &p_mime) const {
 		return Vector<uint8_t>();
 	}
 
-	if (ss->wl_data_source_selection) {
+	if (ss->wl_data_source_selection != nullptr) {
 		// We have a source so the stuff we're pasting is ours. We'll have to pass the
 		// data directly or we'd stall waiting for Godot (ourselves) to send us the
 		// data :P
-
-		OfferState *os = wl_data_offer_get_offer_state(ss->wl_data_offer_selection);
-		ERR_FAIL_NULL_V(os, Vector<uint8_t>());
-
-		if (os->mime_types.has(p_mime)) {
+		if (ss->selection_mimes.has(p_mime)) {
 			// All righty, we're offering this type. Let's just return the data as is.
 			return ss->selection_data;
 		}
 
 		// ... we don't offer that type. Oh well.
+		return Vector<uint8_t>();
+	}
+
+	if (ss->wl_data_offer_selection_is_own) {
+		// The compositor handed us the offer for a source of ours, but cancelled
+		// it in the meantime. There's nothing to read from it, and asking for the
+		// data would mean waiting for ourselves to provide it.
 		return Vector<uint8_t>();
 	}
 
@@ -5974,6 +6051,11 @@ bool WaylandThread::primary_has_mime(const String &p_mime) const {
 	if (ss == nullptr) {
 		DEBUG_LOG_WAYLAND_THREAD("Couldn't get selection, current seat not set.");
 		return false;
+	}
+
+	if (ss->wp_primary_selection_source != nullptr) {
+		// We're the ones offering it.
+		return ss->primary_mimes.has(p_mime);
 	}
 
 	OfferState *os = wp_primary_selection_offer_get_offer_state(ss->wp_primary_selection_offer);
@@ -5991,20 +6073,23 @@ Vector<uint8_t> WaylandThread::primary_get_mime(const String &p_mime) const {
 		return Vector<uint8_t>();
 	}
 
-	if (ss->wp_primary_selection_source) {
+	if (ss->wp_primary_selection_source != nullptr) {
 		// We have a source so the stuff we're pasting is ours. We'll have to pass the
 		// data directly or we'd stall waiting for Godot (ourselves) to send us the
 		// data :P
-
-		OfferState *os = wp_primary_selection_offer_get_offer_state(ss->wp_primary_selection_offer);
-		ERR_FAIL_NULL_V(os, Vector<uint8_t>());
-
-		if (os->mime_types.has(p_mime)) {
+		if (ss->primary_mimes.has(p_mime)) {
 			// All righty, we're offering this type. Let's just return the data as is.
 			return ss->primary_data;
 		}
 
 		// ... we don't offer that type. Oh well.
+		return Vector<uint8_t>();
+	}
+
+	if (ss->wp_primary_selection_offer_is_own) {
+		// The compositor handed us the offer for a source of ours, but cancelled
+		// it in the meantime. There's nothing to read from it, and asking for the
+		// data would mean waiting for ourselves to provide it.
 		return Vector<uint8_t>();
 	}
 
@@ -6029,24 +6114,46 @@ void WaylandThread::primary_set_text(const String &p_text) {
 		return;
 	}
 
-	ss->primary_data = p_text.to_utf8_buffer();
-
-	if (ss->wp_primary_selection_source != nullptr) {
-		zwp_primary_selection_source_v1_destroy(ss->wp_primary_selection_source);
-		ss->wp_primary_selection_source = nullptr;
+	// A source we replaced, but the compositor hasn't told us it's gone yet (it
+	// refuses to, or we're in a hurry to copy again). Dispose of it now.
+	if (ss->wp_primary_selection_source_replaced != nullptr) {
+		zwp_primary_selection_source_v1_destroy(ss->wp_primary_selection_source_replaced);
+		ss->wp_primary_selection_source_replaced = nullptr;
+		ss->primary_data_replaced.clear();
 	}
 
-	ss->wp_primary_selection_source = zwp_primary_selection_device_manager_v1_create_source(registry.wp_primary_selection_device_manager);
-	zwp_primary_selection_source_v1_add_listener(ss->wp_primary_selection_source, &wp_primary_selection_source_listener, ss);
-	zwp_primary_selection_source_v1_offer(ss->wp_primary_selection_source, "text/plain;charset=utf-8");
-	zwp_primary_selection_source_v1_offer(ss->wp_primary_selection_source, "text/plain");
+	// The data the source we're about to replace was created for. The compositor
+	// can still ask that source for it until it cancels it.
+	ss->primary_data_replaced = ss->wp_primary_selection_source != nullptr ? ss->primary_data : Vector<uint8_t>();
+	ss->primary_data = p_text.to_utf8_buffer();
+
+	struct zwp_primary_selection_source_v1 *new_source = zwp_primary_selection_device_manager_v1_create_source(registry.wp_primary_selection_device_manager);
+	zwp_primary_selection_source_v1_add_listener(new_source, &wp_primary_selection_source_listener, ss);
+	zwp_primary_selection_source_v1_offer(new_source, "text/plain;charset=utf-8");
+	zwp_primary_selection_source_v1_offer(new_source, "text/plain");
+
+	// Hand the new source over *before* destroying the old one, see
+	// `selection_set_text()` for the details.
+	ss->wp_primary_selection_source_replaced = ss->wp_primary_selection_source;
+	ss->wp_primary_selection_source = new_source;
+	ss->primary_mimes.insert("text/plain;charset=utf-8");
+	ss->primary_mimes.insert("text/plain");
 
 	// TODO: Implement a good way of getting the latest serial from the user.
-	zwp_primary_selection_device_v1_set_selection(ss->wp_primary_selection_device, ss->wp_primary_selection_source, MAX(ss->pointer_data.button_serial, ss->last_key_pressed_serial));
+	zwp_primary_selection_device_v1_set_selection(ss->wp_primary_selection_device, new_source, MAX(ss->pointer_data.button_serial, ss->last_key_pressed_serial));
 
 	// Wait for the message to get to the server before continuing, otherwise the
-	// clipboard update might come with a delay.
+	// clipboard update might come with a delay. This is also where the compositor
+	// cancels the source we replaced, if it's going to.
 	wl_display_roundtrip(wl_display);
+
+	// Compositors are expected to cancel the source we replaced, but we're not
+	// going to leak it if they don't.
+	if (ss->wp_primary_selection_source_replaced != nullptr) {
+		zwp_primary_selection_source_v1_destroy(ss->wp_primary_selection_source_replaced);
+		ss->wp_primary_selection_source_replaced = nullptr;
+		ss->primary_data_replaced.clear();
+	}
 }
 
 bool WaylandThread::supports_hdr() const {

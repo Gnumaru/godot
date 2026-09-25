@@ -581,8 +581,20 @@ void DisplayServerWayland::clipboard_set(const String &p_text) {
 	wayland_thread.selection_set_text(p_text);
 }
 
+// Selection changes are announced by the compositor asynchronously, so the
+// events telling us about them may still be waiting to be dispatched by the
+// time we get asked what's on the clipboard. Handle them first, or we'll paste
+// whatever was on the clipboard before the last change.
+// NOTE: `wayland_thread.mutex` must be held, as the Wayland thread does the
+// same around its own event dispatching.
+void DisplayServerWayland::_clipboard_flush_pending_events() const {
+	wl_display_dispatch_pending(wayland_thread.get_wl_display());
+}
+
 String DisplayServerWayland::clipboard_get() const {
 	MutexLock mutex_lock(wayland_thread.mutex);
+
+	_clipboard_flush_pending_events();
 
 	Vector<uint8_t> data;
 
@@ -604,6 +616,8 @@ String DisplayServerWayland::clipboard_get() const {
 
 Ref<Image> DisplayServerWayland::clipboard_get_image() const {
 	MutexLock mutex_lock(wayland_thread.mutex);
+
+	_clipboard_flush_pending_events();
 
 	Ref<Image> image;
 	image.instantiate();
@@ -639,6 +653,8 @@ Ref<Image> DisplayServerWayland::clipboard_get_image() const {
 bool DisplayServerWayland::clipboard_has_image() const {
 	MutexLock mutex_lock(wayland_thread.mutex);
 
+	_clipboard_flush_pending_events();
+
 	return wayland_thread.selection_has_mime("image/png") ||
 			wayland_thread.selection_has_mime("image/jpeg") ||
 			wayland_thread.selection_has_mime("image/webp") ||
@@ -658,6 +674,8 @@ void DisplayServerWayland::clipboard_set_primary(const String &p_text) {
 
 String DisplayServerWayland::clipboard_get_primary() const {
 	MutexLock mutex_lock(wayland_thread.mutex);
+
+	_clipboard_flush_pending_events();
 
 	Vector<uint8_t> data;
 

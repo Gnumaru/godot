@@ -191,6 +191,10 @@ class DisplayServerWayland : public DisplayServer {
 
 	void _window_update_hdr_state(WindowData &p_window);
 
+	// Dispatches the events the compositor already sent us but the Wayland
+	// thread hasn't handled yet. Requires `wayland_thread.mutex` to be held.
+	void _clipboard_flush_pending_events() const;
+
 	void try_suspend();
 
 	void initialize_tts() const;

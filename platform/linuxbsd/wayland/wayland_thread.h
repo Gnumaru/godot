@@ -591,17 +591,50 @@ public:
 
 		// Clipboard.
 		struct wl_data_source *wl_data_source_selection = nullptr;
+
+		// The source that `wl_data_source_selection` replaced. It has to be kept
+		// alive until the compositor tells us that it isn't the selection
+		// anymore: destroying the source a compositor currently holds as the
+		// selection makes it drop (and re-announce as empty) the selection.
+		struct wl_data_source *wl_data_source_selection_replaced = nullptr;
+
+		// The data `wl_data_source_selection_replaced` was created for. The
+		// compositor can still ask that source for its data until it's cancelled.
+		Vector<uint8_t> selection_data_replaced;
+
+		// MIME types offered by `wl_data_source_selection`.
+		HashSet<String> selection_mimes;
+
 		Vector<uint8_t> selection_data;
 
 		struct wl_data_offer *wl_data_offer_selection = nullptr;
+
+		// Whether `wl_data_offer_selection` was made out of
+		// `wl_data_source_selection`. Reading from such an offer would mean
+		// waiting for us to hand the data over to ourselves, so it has to be
+		// dealt with locally.
+		bool wl_data_offer_selection_is_own = false;
 
 		// Primary selection.
 		struct zwp_primary_selection_device_v1 *wp_primary_selection_device = nullptr;
 
 		struct zwp_primary_selection_source_v1 *wp_primary_selection_source = nullptr;
+
+		// See `wl_data_source_selection_replaced` above.
+		struct zwp_primary_selection_source_v1 *wp_primary_selection_source_replaced = nullptr;
+
+		// See `selection_data_replaced` above.
+		Vector<uint8_t> primary_data_replaced;
+
+		// MIME types offered by `wp_primary_selection_source`.
+		HashSet<String> primary_mimes;
+
 		Vector<uint8_t> primary_data;
 
 		struct zwp_primary_selection_offer_v1 *wp_primary_selection_offer = nullptr;
+
+		// See `wl_data_offer_selection_is_own` above.
+		bool wp_primary_selection_offer_is_own = false;
 
 		// Tablet.
 		struct zwp_tablet_seat_v2 *wp_tablet_seat = nullptr;
